@@ -2,6 +2,8 @@
 import { createRequire } from 'node:module';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 
 export const ROUTES = {
   moonpay: { packageName: '@moonpay/cli', bin: 'moonpay' },
@@ -102,7 +104,18 @@ export function run(
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isMain = (() => {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(argv1);
+  } catch {
+    return fileURLToPath(import.meta.url) === argv1;
+  }
+})();
+
+if (isMain) {
   const code = run(process.argv.slice(2));
   process.exit(code);
 }
