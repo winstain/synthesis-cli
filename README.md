@@ -1,13 +1,15 @@
 # synthesis-cli
 
-`synthesis-cli` is a deliberately thin wrapper around child CLIs.
+`synthesis-cli` is a deliberately thin umbrella CLI for standalone protocol CLIs.
 
 ## Vision
 
-One entrypoint (`synthesis`) that routes directly to domain CLIs (uniswap, lido, moonpay, 8004, filecoin), without adding abstraction layers that drift from upstream tools.
+One entrypoint (`synth`) that installs and routes directly to child CLIs like `uniswap`, `lido`, `8004`, and `moonpay`, without re-implementing protocol logic in the parent.
 
 ## Philosophy: thin and direct
 
+- Child CLIs are the primitives.
+- `synth` is just the umbrella.
 - No business logic duplication.
 - No protocol-specific wrappers inside this package.
 - Forward args as-is to child CLIs.
@@ -16,16 +18,16 @@ One entrypoint (`synthesis`) that routes directly to domain CLIs (uniswap, lido,
 ## Usage
 
 ```bash
-synthesis <moonpay|uniswap|lido|8004|filecoin> [...args]
+synth <moonpay|uniswap|lido|8004|filecoin> [...args]
 ```
 
 Examples:
 
 ```bash
-synthesis uniswap swap --help
-synthesis lido stake 1
-synthesis 8004 status
-synthesis filecoin --version
+synth uniswap swap --help
+synth lido stake 1
+synth 8004 status
+synth moonpay transaction sign --help
 ```
 
 ## Install
@@ -34,7 +36,7 @@ synthesis filecoin --version
 npm i -g synthesis-cli
 ```
 
-> Note: Child CLIs must also be installed and available on your PATH.
+This package installs its child CLI dependencies and routes to their installed bins directly.
 
 ## Development
 
