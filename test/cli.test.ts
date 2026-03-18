@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { helpText, routeArgs, run } from '../src/cli.js';
+import * as cli from '../src/cli.js';
 
 describe('routeArgs', () => {
   it('parses command and remaining args', () => {
-    expect(routeArgs(['uniswap', 'swap', '--amount', '1'])).toEqual({
+    expect(cli.routeArgs(['uniswap', 'swap', '--amount', '1'])).toEqual({
       command: 'uniswap',
       forwardedArgs: ['swap', '--amount', '1']
     });
@@ -13,28 +13,30 @@ describe('routeArgs', () => {
 describe('run', () => {
   it('prints help and exits 0 with no args', () => {
     const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true as any);
-    const code = run([], vi.fn() as any);
+    const code = cli.run([], vi.fn() as any);
     expect(code).toBe(0);
-    expect(stdoutWrite).toHaveBeenCalledWith(`${helpText()}\n`);
+    expect(stdoutWrite).toHaveBeenCalledWith(`${cli.helpText()}\n`);
     stdoutWrite.mockRestore();
   });
 
   it('returns 1 for unknown command', () => {
     const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true as any);
-    const code = run(['unknown'], vi.fn() as any);
+    const code = cli.run(['unknown'], vi.fn() as any);
     expect(code).toBe(1);
     expect(stderrWrite).toHaveBeenCalled();
     stderrWrite.mockRestore();
   });
 
-  it('forwards args to mapped child command', () => {
+  it('resolves and forwards args to child bin via node', () => {
     const spawnFn = vi.fn().mockReturnValue({ status: 0 });
-    const code = run(['uniswap', 'swap', '--help'], spawnFn as any);
+    const resolveBinPathFn = vi.fn().mockReturnValue('/fake/uniswap-cli/dist/index.js');
+    const code = cli.run(['uniswap', 'swap', '--help'], spawnFn as any, resolveBinPathFn);
 
     expect(code).toBe(0);
+    expect(resolveBinPathFn).toHaveBeenCalledWith('uniswap');
     expect(spawnFn).toHaveBeenCalledWith(
-      'uniswap',
-      ['swap', '--help'],
+      process.execPath,
+      ['/fake/uniswap-cli/dist/index.js', 'swap', '--help'],
       expect.objectContaining({ stdio: 'inherit' })
     );
   });

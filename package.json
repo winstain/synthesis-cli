@@ -1,10 +1,11 @@
 {
   "name": "synthesis-cli",
   "version": "0.1.0",
-  "description": "Thin wrapper CLI that routes to DeFi and infra child CLIs",
+  "description": "Thin umbrella CLI that installs and routes to protocol child CLIs",
   "private": false,
   "type": "module",
   "bin": {
+    "synth": "dist/cli.js",
     "synthesis": "dist/cli.js"
   },
   "files": [
@@ -22,11 +23,11 @@
   },
   "keywords": [
     "cli",
-    "wrapper",
+    "synthesis",
     "uniswap",
     "lido",
     "moonpay",
-    "filecoin"
+    "8004"
   ],
   "author": "",
   "license": "MIT",
@@ -36,6 +37,12 @@
   "publishConfig": {
     "provenance": false,
     "access": "public"
+  },
+  "dependencies": {
+    "@moonpay/cli": "^1.6.4",
+    "8004-cli": "^1.0.2",
+    "lido-cli": "^1.2.0",
+    "uniswap-cli": "^1.2.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
