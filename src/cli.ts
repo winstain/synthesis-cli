@@ -284,6 +284,7 @@ export function run(
   }
 }
 
+/* c8 ignore start */
 const isMain = (() => {
   const argv1 = process.argv[1];
   if (!argv1) return false;
@@ -303,3 +304,4 @@ if (isMain) {
     process.exit(result);
   }
 }
+/* c8 ignore stop */
