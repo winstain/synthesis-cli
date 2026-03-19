@@ -44,9 +44,11 @@ synth moonpay transaction sign --help
 ### Utility commands
 
 ```bash
-synth list       # List registered child CLIs
-synth versions   # Show all versions
-synth doctor     # Health check — verify all child CLIs resolve
+synth list         # List registered child CLIs
+synth versions     # Show all versions
+synth doctor       # Health check — verify all child CLIs resolve
+synth skills       # List bundled agent skills
+synth skills path  # Print the skills directory
 ```
 
 ## How it works
