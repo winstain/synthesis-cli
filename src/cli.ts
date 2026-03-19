@@ -4,7 +4,7 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 export const ROUTES = {
   moonpay: { packageName: '@moonpay/cli', bin: 'moonpay' },
@@ -25,6 +25,9 @@ Usage:
   synth list          List all registered child CLIs
   synth versions      Show synthesis-cli and child CLI versions
   synth doctor        Check child CLI health (resolvable + bin exists)
+  synth skills        List available agent skills
+  synth skills path   Print path to skills directory
+  synth skills show <name>  Print a skill's content
 
 Examples:
   synth uniswap swap --help
@@ -107,6 +110,93 @@ export function runVersions(require: NodeRequire): number {
   return 0;
 }
 
+export function getSkillsDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills');
+}
+
+export type SkillInfo = {
+  name: string;
+  description: string;
+  dir: string;
+};
+
+function parseFrontmatter(content: string): { name?: string; description?: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+  const yaml = match[1];
+  const result: Record<string, string> = {};
+  for (const line of yaml.split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const value = line.slice(colonIdx + 1).trim();
+    result[key] = value;
+  }
+  return result;
+}
+
+export async function listSkills(): Promise<SkillInfo[]> {
+  const skillsDir = getSkillsDir();
+  let entries: string[];
+  try {
+    entries = await readdir(skillsDir);
+  } catch {
+    return [];
+  }
+  const skills: SkillInfo[] = [];
+  for (const entry of entries.sort()) {
+    const skillFile = path.join(skillsDir, entry, 'SKILL.md');
+    try {
+      const content = await readFile(skillFile, 'utf8');
+      const fm = parseFrontmatter(content);
+      if (fm.name && fm.description) {
+        skills.push({ name: fm.name, description: fm.description, dir: entry });
+      }
+    } catch {
+      // skip dirs without valid SKILL.md
+    }
+  }
+  return skills;
+}
+
+export async function runSkills(subArgs: string[]): Promise<number> {
+  const sub = subArgs[0];
+
+  if (sub === 'path') {
+    process.stdout.write(`${getSkillsDir()}\n`);
+    return 0;
+  }
+
+  if (sub === 'show') {
+    const name = subArgs[1];
+    if (!name) {
+      process.stderr.write('Usage: synth skills show <name>\n');
+      return 1;
+    }
+    const skillFile = path.join(getSkillsDir(), name, 'SKILL.md');
+    try {
+      const content = await readFile(skillFile, 'utf8');
+      process.stdout.write(content);
+      return 0;
+    } catch {
+      process.stderr.write(`Skill not found: ${name}\n`);
+      return 1;
+    }
+  }
+
+  // Default: list skills
+  const skills = await listSkills();
+  if (skills.length === 0) {
+    process.stdout.write('No skills found.\n');
+    return 0;
+  }
+  process.stdout.write('Available skills:\n\n');
+  for (const skill of skills) {
+    process.stdout.write(`  ${skill.name.padEnd(14)} ${skill.description}\n`);
+  }
+  return 0;
+}
+
 export function runDoctor(require: NodeRequire): number {
   const children = getChildInfo(require);
   let allOk = true;
@@ -155,7 +245,7 @@ export function run(
   argv: string[],
   spawnFn: SpawnFn = spawnSync,
   resolveBinPathFn: ResolveBinPathFn = resolveBinPath
-): number {
+): number | Promise<number> {
   const { command, forwardedArgs } = routeArgs(argv);
 
   if (!command || command === '-h' || command === '--help' || command === 'help') {
@@ -167,6 +257,7 @@ export function run(
   if (command === 'list') return runList(require);
   if (command === 'versions') return runVersions(require);
   if (command === 'doctor') return runDoctor(require);
+  if (command === 'skills') return runSkills(forwardedArgs);
 
   if (!(command in ROUTES)) {
     process.stderr.write(`Unknown command: ${command}\n\n${helpText()}\n`);
@@ -205,6 +296,10 @@ const isMain = (() => {
 })();
 
 if (isMain) {
-  const code = run(process.argv.slice(2));
-  process.exit(code);
+  const result = run(process.argv.slice(2));
+  if (result instanceof Promise) {
+    result.then((code) => process.exit(code));
+  } else {
+    process.exit(result);
+  }
 }
