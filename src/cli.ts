@@ -10,7 +10,7 @@ export const ROUTES = {
   uniswap: { packageName: 'uniswap-cli', bin: 'uniswap' },
   lido: { packageName: 'lido-cli', bin: 'lido' },
   '8004': { packageName: '8004-cli', bin: '8004' },
-  filecoin: { packageName: 'filecoin', bin: 'filecoin' }
+  filecoin: { packageName: 'filecoin-cli', bin: 'filecoin' }
 } as const;
 
 export type RouteName = keyof typeof ROUTES;
