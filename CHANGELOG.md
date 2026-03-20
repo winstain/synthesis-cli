@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.2.1...synthesis-cli-v0.3.0) (2026-03-20)
+
+
+### Features
+
+* add agent skill layer with 6 skills and synth skills command ([#19](https://github.com/winstain/synthesis-cli/issues/19)) ([4bdeb3f](https://github.com/winstain/synthesis-cli/commit/4bdeb3fb699ae3c4cc38183b7f310f7b8961433b))
+* add list, versions, and doctor utility commands ([#16](https://github.com/winstain/synthesis-cli/issues/16)) ([95ecc04](https://github.com/winstain/synthesis-cli/commit/95ecc041f5a1255029a9d31490de947b755117b9)), closes [#8](https://github.com/winstain/synthesis-cli/issues/8)
+* add OWS support and align docs around workflows ([b91b611](https://github.com/winstain/synthesis-cli/commit/b91b6113396d4546a33827b0b1bc109fce592b75))
+
+
+### Bug Fixes
+
+* align optional dependency lockfile for CI ([#22](https://github.com/winstain/synthesis-cli/issues/22)) ([4a9613a](https://github.com/winstain/synthesis-cli/commit/4a9613a0ac00e74a0b5f83d329a7332950d50267))
+* correct filecoin route packageName to filecoin-cli ([#15](https://github.com/winstain/synthesis-cli/issues/15)) ([6ece79d](https://github.com/winstain/synthesis-cli/commit/6ece79de236a4058a86038696165397844203b01))
+* handle installed bin invocation via symlinked entrypoints ([bdde2a2](https://github.com/winstain/synthesis-cli/commit/bdde2a2a0068805aaa7d7bcc134e2fb61af34b1c))
+* handle installed bin invocation via symlinked npm entrypoints ([b45a293](https://github.com/winstain/synthesis-cli/commit/b45a29345b26ee20a6e7e65656de871d6a43a5e4))
+
 ## [0.2.1](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.2.0...synthesis-cli-v0.2.1) (2026-03-18)
 
 
