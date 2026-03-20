@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@moonpay/cli": "^1.6.4",
+    "@open-wallet-standard/core": "^0.3.9",
     "8004-cli": "^1.0.2",
     "filecoin-cli": "^1.0.0",
     "lido-cli": "^1.2.0",

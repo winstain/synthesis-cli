@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as cli from '../src/cli.js';
 
-const EXPECTED_SKILLS = ['8004', 'filecoin', 'lido', 'moonpay', 'synthesis', 'uniswap'];
+const EXPECTED_SKILLS = ['8004', 'filecoin', 'lido', 'moonpay', 'ows', 'synthesis', 'uniswap'];
 
 describe('skills directory', () => {
   it('getSkillsDir returns a path ending in skills/', () => {

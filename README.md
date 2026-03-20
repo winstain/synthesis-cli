@@ -4,11 +4,22 @@
 [![CI](https://github.com/winstain/synthesis-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/winstain/synthesis-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-A thin umbrella CLI that composes standalone protocol CLIs into full on-chain workflows.
+A thin umbrella CLI that composes standalone protocol CLIs and wallet/signing CLIs into full on-chain workflows for agents.
+
+Standalone protocol CLIs are useful, but they are not the end state. The real goal is to give agents practical powers in the terminal: inspect state, build transactions, sign messages, sign transactions, broadcast transactions, and coordinate multi-step on-chain actions through one install and one set of skills.
 
 ## The idea
 
-Each protocol gets its own CLI. Each CLI is independently useful. `synth` routes to them and they compose through a shared contract: **unsigned transaction JSON**.
+Each protocol gets its own CLI. Each CLI can stand on its own, but the point is not to collect isolated command-line toys. `synth` routes to them and the bundled skills teach agents how to compose them into real workflows.
+
+That is the product thesis:
+- **tools** give agents powers
+- **skills** teach agents how to combine those powers
+- **synth** puts the whole stack behind one install
+
+The longer-term vision is a kind of **superapp for agents**, but not in the human-UI sense. Agents do not need a WeChat-style interface. They need reliable tools, structured outputs, and a terminal-native workflow substrate.
+
+The CLIs compose through shared structured contracts: **unsigned transaction JSON** for EVM flows, and protocol-native structured envelopes where needed.
 
 ```
 synth uniswap quote → permitData → synth moonpay message sign → signature
@@ -80,24 +91,24 @@ Signer CLIs (like `moonpay`) consume them. This is the universal handoff that ma
 
 ```bash
 # 1. Check if approval is needed
-synth uniswap check-approval --token $TOKEN_IN --amount $AMOUNT --chainId 137
+synth uniswap check-approval --token $TOKEN_IN --amount $AMOUNT --chain 137 --wallet 0xADDR
 
 # 2. Approve (if needed) — sign + send the approval tx
-synth moonpay transaction sign --to $APPROVAL_TO --data $APPROVAL_DATA --chainId 137
-synth moonpay transaction send --signedTransaction $SIGNED --chainId 137
+synth moonpay transaction sign --wallet-id <wid> --to $APPROVAL_TO --data $APPROVAL_DATA --value 0 --chain-id 137
+synth moonpay transaction send --wallet-id <wid> --signed-tx $SIGNED
 
 # 3. Get quote + Permit2 data
-synth uniswap quote --tokenIn $TOKEN_IN --tokenOut $TOKEN_OUT --amount $AMOUNT --chainId 137
+synth uniswap swap --from $TOKEN_IN --to $TOKEN_OUT --amount $AMOUNT --chain 137 --wallet 0xADDR
 
 # 4. Sign the Permit2 EIP-712 message
-synth moonpay message sign --typedData "$PERMIT_DATA"
+synth moonpay message sign --wallet-id <wid> --typedData "$PERMIT_DATA"
 
 # 5. Build the swap tx (with permit signature)
-synth uniswap swap --tokenIn $TOKEN_IN --tokenOut $TOKEN_OUT --signature $SIG --chainId 137
+synth uniswap swap --from $TOKEN_IN --to $TOKEN_OUT --amount $AMOUNT --chain 137 --wallet 0xADDR --permit-signature $SIG
 
 # 6. Sign + send the swap tx
-synth moonpay transaction sign --to $SWAP_TO --data $SWAP_DATA --chainId 137
-synth moonpay transaction send --signedTransaction $SIGNED --chainId 137
+synth moonpay transaction sign --wallet-id <wid> --to $SWAP_TO --data $SWAP_DATA --value 0 --chain-id 137
+synth moonpay transaction send --wallet-id <wid> --signed-tx $SIGNED
 ```
 
 See [docs/guides/first-swap.md](./docs/guides/first-swap.md) for the full walkthrough with example output.
@@ -114,9 +125,13 @@ See [docs/guides/first-swap.md](./docs/guides/first-swap.md) for the full walkth
 
 ## Docs
 
-- **[Architecture](./docs/architecture.md)** — Philosophy, routing, the unsigned tx contract, Permit2 composition
+- **[Architecture](./docs/architecture.md)** — Philosophy, routing, output contracts, Permit2 composition, and MCP expectations
+- **[Narrative](./docs/narrative.md)** — Why this started as a simple Uniswap CLI and became a terminal-native tool/skill stack for agents
+- **[Prize Strategy](./docs/prize-strategy.md)** — Which tracks matter, what they require, and how roadmap work maps to deliverables
+- **[Collaboration Notes](./docs/collaboration.md)** — Anonymized human ↔ agent collaboration source material for submission and demo copy
 - **[First Swap Guide](./docs/guides/first-swap.md)** — Step-by-step Uniswap swap walkthrough
 - **[Adding a CLI](./docs/guides/adding-a-cli.md)** — How to add a new child CLI to the stack
+- **[Submission Readiness](./docs/submission-readiness.md)** — Demo checklist and how to present the stack cleanly
 - **[Roadmap](./docs/roadmap.md)** — Current state and what's next
 
 ## Development

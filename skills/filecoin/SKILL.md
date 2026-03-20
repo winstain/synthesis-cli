@@ -1,26 +1,23 @@
 ---
 name: filecoin
-description: Interact with the Filecoin network and IPFS. Use when an agent needs chain data, balances, storage provider info, or IPFS content operations.
+description: Interact with the Filecoin network and IPFS. Use when an agent needs chain data, balances, miner info, actor state, IPFS content access, or unsigned Filecoin message building.
 ---
 
 # Filecoin CLI
 
-Filecoin chain queries, IPFS content operations, and storage provider info.
+Filecoin chain queries, IPFS content operations, and unsigned message building.
 
 ## Commands
 
 ### `filecoin chain`
 
-Query chain state (head, block, tipset).
-
 ```bash
-filecoin chain head
-filecoin chain block <cid>
+filecoin chain
 ```
 
-### `filecoin balance`
+Returns head, network version, network name, and base fee.
 
-Check FIL balance for an address.
+### `filecoin balance`
 
 ```bash
 filecoin balance --address f1xxx
@@ -28,42 +25,76 @@ filecoin balance --address f1xxx
 
 ### `filecoin miner`
 
-Query storage provider (miner) info.
-
 ```bash
-filecoin miner --id f0123456
+filecoin miner --address f01234
 ```
 
 ### `filecoin actor`
-
-Look up actor state on-chain.
 
 ```bash
 filecoin actor --address f1xxx
 ```
 
-### `filecoin ipfs`
-
-IPFS content operations — add, cat, pin.
-
-```bash
-filecoin ipfs add --file ./data.json
-filecoin ipfs cat <cid>
-filecoin ipfs pin <cid>
-```
-
 ### `filecoin address`
 
-Generate or derive Filecoin addresses.
-
 ```bash
-filecoin address new
-filecoin address from-eth --address 0xYourAddress
+filecoin address --address f1xxx
 ```
 
-## Key Concepts
+Resolves a Filecoin address to its ID address.
 
-- **Addresses**: Filecoin uses `f`-prefixed addresses (f0, f1, f2, f3, f4). `f4` addresses map to EVM-style 0x addresses on Filecoin's FEVM.
-- **Storage providers**: Formerly called "miners" — they store data and earn FIL.
-- **IPFS integration**: Filecoin backs IPFS with verifiable storage deals. Content is addressed by CID.
-- **Read-only**: These commands query chain state and IPFS — they don't build unsigned transactions. No signing needed.
+### `filecoin ipfs`
+
+#### Resolve gateway metadata
+
+```bash
+filecoin ipfs resolve --cid bafy...
+```
+
+#### Fetch content
+
+```bash
+filecoin ipfs cat --cid bafy...
+```
+
+### `filecoin message`
+
+Build a raw unsigned Filecoin message:
+
+```bash
+filecoin message build --from f1... --to f01234 --value 0 --method 2 --params <base64>
+```
+
+### `filecoin transfer`
+
+Build a simple FIL transfer message:
+
+```bash
+filecoin transfer --from f1... --to f1... --value 1000000000000000000
+```
+
+If nonce/gas fields are omitted, the CLI fetches or estimates them from RPC.
+
+## Output contract
+
+`message build` and `transfer` return a stable unsigned Filecoin message envelope for downstream signing/execution systems.
+
+## MCP server
+
+```bash
+filecoin mcp
+```
+
+Representative tools include:
+- `filecoin_chain`
+- `filecoin_balance`
+- `filecoin_miner`
+- `filecoin_actor`
+- `ipfs_resolve`
+- `ipfs_cat`
+
+## Notes
+
+- Filecoin uses `f`-prefixed addresses.
+- This CLI is both read-oriented and message-builder-oriented.
+- IPFS support here is gateway-based resolution and fetch, not full pin/add lifecycle.

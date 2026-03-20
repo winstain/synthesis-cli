@@ -8,6 +8,7 @@ import { readFile, readdir } from 'node:fs/promises';
 
 export const ROUTES = {
   moonpay: { packageName: '@moonpay/cli', bin: 'moonpay' },
+  ows: { packageName: '@open-wallet-standard/core', bin: 'ows' },
   uniswap: { packageName: 'uniswap-cli', bin: 'uniswap' },
   lido: { packageName: 'lido-cli', bin: 'lido' },
   '8004': { packageName: '8004-cli', bin: '8004' },
@@ -21,7 +22,7 @@ const HELP_TEXT = `synthesis-cli
 A thin command router for child CLIs.
 
 Usage:
-  synth <moonpay|uniswap|lido|8004|filecoin> [...args]
+  synth <moonpay|ows|uniswap|lido|8004|filecoin> [...args]
   synth list          List all registered child CLIs
   synth versions      Show synthesis-cli and child CLI versions
   synth doctor        Check child CLI health (resolvable + bin exists)
@@ -31,6 +32,7 @@ Usage:
 
 Examples:
   synth uniswap swap --help
+  synth ows sign message --help
   synth lido stake 1
   synth 8004 status
   synth doctor

@@ -53,7 +53,16 @@ Any command that produces a transaction should output this shape:
 | `value` | `string` | Wei value to send (use `"0"` for non-payable) |
 | `chainId` | `number` | EIP-155 chain ID |
 
-This is what signer CLIs (like `@moonpay/cli`) consume. By outputting this shape, your CLI composes with any signer in the stack.
+This is what synthesis currently treats as the canonical unsigned EVM transaction contract.
+
+Signer backends may consume it differently:
+- `@moonpay/cli` is closer to direct object-field consumption
+- `ows` / Open Wallet Standard may require a serialized transaction payload instead of the raw JSON envelope
+
+That signer-specific adaptation should happen in skills/workflows, not in the child CLI contract.
+
+If you are targeting OWS transaction signing specifically, reference the OWS signing-interface spec:
+- https://github.com/open-wallet-standard/core/blob/main/docs/02-signing-interface.md
 
 ### If your protocol needs off-chain signatures
 

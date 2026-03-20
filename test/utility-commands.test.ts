@@ -27,6 +27,7 @@ describe('utility commands', () => {
       expect(names).toContain('8004');
       expect(names).toContain('filecoin');
       expect(names).toContain('moonpay');
+      expect(names).toContain('ows');
     });
 
     it('includes version and binPath for installed packages', () => {

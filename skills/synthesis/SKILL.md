@@ -1,120 +1,116 @@
 ---
 name: synthesis
-description: Compose protocol CLIs into multi-step on-chain workflows. Use when an agent needs to orchestrate across multiple child CLIs (e.g. quote + sign + swap, or stake + sign + send).
+description: Compose protocol CLIs into multi-step on-chain workflows. Use when an agent needs to orchestrate across multiple child CLIs (for example quote + permit-sign + swap, or build tx + sign + send).
 ---
 
 # Synthesis CLI — Orchestration
 
-Synthesis is a thin router that forwards commands to child CLIs. The real value is **composing** them into multi-step workflows.
+Synthesis is a thin router that forwards commands to child CLIs. The value is in **composing** them into end-to-end workflows.
 
 ## Discovery
 
 ```bash
-synth list              # List registered child CLIs
-synth versions          # Show all versions
-synth doctor            # Health check — are all CLIs installed and resolvable?
-synth skills            # List available agent skills
-synth skills show <n>   # Print a skill's full content
+synth list
+synth versions
+synth doctor
+synth skills
+synth skills show <name>
 ```
 
-## Composition Patterns
+## Composition patterns
 
-### Pattern 1: Simple Transaction
+### Pattern 1: Build tx → sign → send
 
-Any protocol CLI that outputs `{ to, data, value, chainId }` → sign → send.
+Any child CLI that outputs unsigned tx JSON can be paired with a signer backend. Prefer OWS as the default assumption, but do the signer-specific conversion in the skill/workflow layer rather than in the child CLI.
 
 ```bash
-# 1. Build the unsigned tx
-lido stake --amount 1.0 --wallet 0xAddr
-
-# 2. Sign it
-moonpay transaction sign --wallet-id <wid> --to <to> --data <data> --value <value> --chain-id <chainId>
-
-# 3. Broadcast
-moonpay transaction send --wallet-id <wid> --signed-tx <signedTx>
+synth lido stake --amount 1.0 --wallet 0xAddr
+# start from the returned base tx JSON
+# fetch nonce/gas/fees
+# serialize unsigned EIP-1559 tx
+ows sign send-tx --chain ethereum --wallet agent-treasury --tx 0xSERIALIZED_UNSIGNED_TX --json
 ```
 
-### Pattern 2: Approval Flow
-
-Some tokens need a one-time approval before Permit2 can use them.
+### Pattern 2: Approval flow
 
 ```bash
-# 1. Check if approval is needed
-uniswap check-approval --chain polygon --token 0xUSDC --wallet 0xAddr
-
-# 2. If approvalNeeded: sign and send the approval tx
-moonpay transaction sign --wallet-id <wid> --to <to> --data <data> --value 0 --chain-id 137
-moonpay transaction send --wallet-id <wid> --signed-tx <signedTx>
-
-# 3. Then proceed with the swap (Pattern 3)
+synth uniswap check-approval --token 0xUSDC --amount 1000000 --chain 137 --wallet 0xAddr
 ```
 
-### Pattern 3: Permit2 Swap (Uniswap)
-
-The full quote → permit-sign → swap → tx-sign → broadcast flow.
+If `approval` is returned:
 
 ```bash
-# 1. Get quote (includes permitData for EIP-712 signing)
-uniswap quote \
-  --chain polygon \
-  --tokenIn 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 \
-  --tokenOut 0xc2132D05D31c914a87C6611C10748AEb04B58e8F \
-  --amount 10000000 \
-  --wallet 0xAddr
+# start from the returned approval tx JSON
+# fetch nonce/gas/fees
+# serialize unsigned EIP-1559 tx
+ows sign send-tx --chain ethereum --wallet agent-treasury --tx 0xSERIALIZED_UNSIGNED_TX --json
+```
+
+Then continue with the swap flow.
+
+### Pattern 3: Permit2 swap (Uniswap)
+
+#### ERC-20 input token flow
+
+```bash
+# 1. Run swap once to get permitData
+synth uniswap swap --from USDC --to WETH --amount 1000000 --chain 8453 --wallet 0xAddr
 
 # 2. Sign the Permit2 typed data
-moonpay message sign --wallet-id <wid> --typedData '<permitData from step 1>'
-# → { "signature": "0x..." }
+ows sign message --chain ethereum --wallet agent-treasury --typed-data '<permitData json>' --message ignored --json
 
-# 3. Build swap tx with the permit signature
-uniswap swap --chain polygon --quoteId <id> --permit-sig <signature>
-# → { to, data, value, chainId }
+# 3. Run swap again with the signature to get the unsigned tx
+synth uniswap swap --from USDC --to WETH --amount 1000000 --chain 8453 --wallet 0xAddr --permit-signature 0xSig
 
-# 4. Sign the swap transaction
-moonpay transaction sign --wallet-id <wid> --to <to> --data <data> --value <value> --chain-id 137
-
-# 5. Broadcast
-moonpay transaction send --wallet-id <wid> --signed-tx <signedTx>
+# 4. Sign + send the tx
+# start from the returned synthesis tx JSON
+# fetch nonce/gas/fees and serialize unsigned EIP-1559 tx
+ows sign send-tx --chain ethereum --wallet agent-treasury --tx 0xSERIALIZED_UNSIGNED_TX --json
 ```
 
-### Reference: USDC.e → USDT on Polygon
-
-A concrete end-to-end example:
+#### Native-token input flow
 
 ```bash
-# Check approval for USDC.e on Polygon
-uniswap check-approval \
-  --chain polygon \
-  --token 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 \
-  --wallet 0xAddr
-# → { "approvalNeeded": false }  (already approved)
-
-# Get quote: 10 USDC.e → USDT
-uniswap quote \
-  --chain polygon \
-  --tokenIn 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 \
-  --tokenOut 0xc2132D05D31c914a87C6611C10748AEb04B58e8F \
-  --amount 10000000 \
-  --wallet 0xAddr
-# → { quoteId: "abc", amountOut: "9985000", permitData: {...}, quoteData: "..." }
-
-# Sign Permit2
-moonpay message sign --wallet-id <wid> --typedData '<permitData>'
-# → { signature: "0xabc..." }
-
-# Build swap tx
-uniswap swap --chain polygon --quoteId abc --permit-sig 0xabc...
-# → { to: "0x...", data: "0x...", value: "0", chainId: 137 }
-
-# Sign + send
-moonpay transaction sign --wallet-id <wid> --to 0x... --data 0x... --value 0 --chain-id 137
-moonpay transaction send --wallet-id <wid> --signed-tx 0xSigned...
+synth uniswap swap --from ETH --to USDC --amount 1000000000000000000 --chain 8453 --wallet 0xAddr
 ```
 
-## Rules for Composition
+That can return the unsigned tx directly, with no Permit2 signature step.
 
-1. **Never skip the quote step** for Uniswap swaps — routing changes constantly.
-2. **Always check approval** before a Permit2 flow — saves gas and avoids reverts.
-3. **Pipe JSON between steps** — each CLI outputs structured JSON that feeds the next.
-4. **MoonPay is always the signer** — protocol CLIs build txs, MoonPay signs and sends them.
-5. **Chain IDs must match** across all steps in a flow.
+## Shared contracts
+
+### Unsigned EVM tx contract
+
+Most write-oriented EVM child CLIs emit:
+
+```json
+{
+  "to": "0x...",
+  "data": "0x...",
+  "value": "0",
+  "chainId": 8453
+}
+```
+
+That is the universal synthesis-side handoff. Signer backends may require adaptation before signing; OWS is the default assumption and expects serialized transaction input for `ows sign tx` / `ows sign send-tx`.
+
+That adaptation should happen in skills/workflows, not in the child CLIs.
+
+### Filecoin unsigned message contract
+
+`filecoin-cli` emits a Filecoin-native unsigned message envelope rather than the EVM tx shape.
+
+## MCP expectation
+
+Each protocol child CLI should also expose `mcp` for agent-native usage:
+- `uniswap mcp`
+- `lido mcp`
+- `8004 mcp`
+- `filecoin mcp`
+
+## Rules for composition
+
+1. The parent router stays thin.
+2. Child CLIs own protocol logic.
+3. Always pass structured JSON between steps.
+4. Uniswap ERC-20 flows require separate permit signing.
+5. Match the signer network/chain ID to the transaction payload exactly.
