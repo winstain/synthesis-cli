@@ -87,10 +87,10 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 - **Notes:** foundational for all workflow work.
 
 ## A2. First-class workflow runner in `synthesis-cli`
-- **Status:** `in-progress`
+- **Status:** `done` (core runner + 5 built-in workflows shipped; resumability deferred to A4)
 - **Priority:** `P0`
 - **Issue:** #27
-- **Progress note:** first shippable slice landed (`synth run`, workflow discovery, `--plan`, and built-in `doctor-summary`); resumability and richer workflows remain open.
+- **Progress note:** `synth run` ships with 5 real built-in workflows that call child CLIs via spawnSync, capture JSON output, and return typed workflow state. `--plan` mode works across all workflows.
 - **Title:** Add `synth run <workflow>` orchestration layer
 - **Why it matters:** turns synthesis from thin router into reusable orchestration layer without pulling protocol logic into the parent.
 - **Scope:**
@@ -105,9 +105,9 @@ Goal: make workflows durable, extensible, and contributor-friendly.
   - child protocol logic remains delegated to child CLIs
 
 ## A3. Workflow plan / dry-run mode
-- **Status:** `issue-open`
+- **Status:** `done`
 - **Priority:** `P0`
-- **Issue:** #24
+- **Issue:** #24 (closed)
 - **Title:** Add `--plan` / dry-run mode for workflow execution
 - **Why it matters:** agents and humans need to inspect the exact path before signatures or broadcasts happen.
 - **Scope:**
@@ -156,10 +156,10 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 # Milestone B — First built-in workflows
 
 ## B1. Built-in workflow: Uniswap full swap
-- **Status:** `in-progress`
+- **Status:** `done`
 - **Priority:** `P0`
-- **Issue:** #26
-- **Progress note:** first slice shipped as plan-first built-in (`uniswap-swap`) that returns signer-boundary state without signing/send execution.
+- **Issue:** #26 (closed)
+- **Progress note:** `uniswap-swap` calls check-approval + quote via child CLI, returns structured state with approval, quote, tx, and permitData artifacts. Signing/send deferred to signer adapter layer (A5).
 - **Title:** Add a built-in `uniswap-swap` workflow
 - **Why it matters:** this is the flagship demo of the stack: approval check → quote → Permit2 sign → tx sign → tx send.
 - **Scope:**
@@ -173,9 +173,9 @@ Goal: make workflows durable, extensible, and contributor-friendly.
   - docs show the end-to-end flow
 
 ## B2. Built-in workflows: Lido stake / wrap
-- **Status:** `issue-open`
+- **Status:** `done`
 - **Priority:** `P1`
-- **Issue:** #29
+- **Issue:** #29 (closed)
 - **Title:** Add built-in `lido-stake` and `lido-wrap` workflows
 - **Why it matters:** proves synthesis is a multi-protocol orchestration system, not just a Uniswap shell.
 - **Scope:**
@@ -192,9 +192,9 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 - **Dependencies:** A1–A4
 
 ## B3. Built-in workflows: ERC-8004 identity / receipts
-- **Status:** `issue-open`
+- **Status:** `done` (agent-register shipped; agent-rate deferred)
 - **Priority:** `P1`
-- **Issue:** #30
+- **Issue:** #30 (closed)
 - **Title:** Add `agent-register` / `agent-rate` workflows around `8004-cli`
 - **Why it matters:** makes ERC-8004 central to the synthesis story rather than just an adjacent protocol CLI.
 - **Scope:**

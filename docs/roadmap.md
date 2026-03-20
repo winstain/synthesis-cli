@@ -23,7 +23,14 @@ The parent should become more useful **without** turning into a monolith.
 - wallet/signing backends now include both MoonPay and OWS in the synthesis docs + routing model
 - local repo docs/skills are aligned to the real command surfaces
 - workflow/orchestration tickets now exist in both GitHub issues and `docs/tickets.md`
-- a minimal `synth run` scaffold is shipped with workflow discovery, `--plan`, and initial built-ins (`doctor-summary`, plus plan-only `uniswap-swap`)
+- `synth run` is shipped with 5 real built-in workflows that execute child CLI commands and return structured JSON state:
+  - `doctor-summary` — structured health snapshot
+  - `uniswap-swap` — check-approval + quote → unsigned tx + permit data
+  - `lido-stake` — build unsigned staking tx
+  - `lido-wrap` — build unsigned wrap tx
+  - `agent-register` — build unsigned ERC-8004 registration tx
+- all workflows support `--plan` mode (show exact commands without execution)
+- workflow state envelope returned as typed JSON with statuses: planned, needs_signature, failed, etc.
 
 ---
 
