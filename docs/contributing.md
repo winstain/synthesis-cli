@@ -51,7 +51,7 @@ A child CLI is a standalone npm package with its own repo. It should:
 ```
 
 4. **Expose MCP.** Add a `mcp` subcommand that starts an MCP server so agents can call the CLI as a tool.
-5. **Include OWS-ready payloads** when a `--wallet` flag is provided. This means adding `unsignedTxHex`, `signCommand`, and `sendCommand` fields alongside the generic tx output. This is best-effort — if nonce/gas estimation fails, omit the OWS payload and return the generic tx.
+5. **Stay signer-agnostic.** Child CLIs emit the generic unsigned tx contract. They should never import or depend on a specific signer (OWS, MoonPay, etc.). Signer-specific conversion (like serializing to OWS `unsignedTxHex`) belongs in the synthesis workflow layer or in agent skills — not in child CLIs.
 
 ### Registering in synthesis-cli
 
@@ -75,7 +75,7 @@ export const ROUTES = {
 - [ ] JSON output by default on all commands
 - [ ] Unsigned tx contract: `{ to, data, value, chainId }`
 - [ ] `mcp` subcommand
-- [ ] `--wallet` flag emits OWS-ready payloads (best-effort)
+- [ ] No signer-specific code — stays agnostic
 - [ ] Tests with 100% coverage
 - [ ] README with examples
 - [ ] CI: build + test on PR/push
@@ -182,21 +182,7 @@ This is the universal handoff between protocol CLIs and signer CLIs:
 
 Protocol CLIs produce this. Signer CLIs consume it. This separation is what makes the stack composable.
 
-When a `--wallet` flag is provided, child CLIs also emit an OWS-ready payload:
-
-```json
-{
-  "ows": {
-    "chain": "evm",
-    "unsignedTxHex": "02f8...",
-    "rpcUrl": "https://...",
-    "signCommand": "ows sign tx --wallet <name> --chain evm --tx-hex 02f8...",
-    "sendCommand": "ows sign send-tx --wallet <name> --chain evm --tx-hex 02f8... --rpc-url https://..."
-  }
-}
-```
-
-This is best-effort — if gas/nonce estimation fails, the generic tx is still returned and the agent can handle serialization itself.
+Child CLIs never include signer-specific payloads. Converting the generic tx into a signer-ready format (like OWS `unsignedTxHex`) is the responsibility of the synthesis workflow layer or agent skills. This keeps child CLIs composable with any signer backend.
 
 ## Development
 
