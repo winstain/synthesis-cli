@@ -42,7 +42,8 @@ npm i -g synthesis-cli
 ## Usage
 
 ```bash
-synth <moonpay|uniswap|lido|8004|filecoin> [...args]
+synth <moonpay|ows|uniswap|lido|8004|filecoin> [...args]
+synth run <workflow> [--plan] [--key value ...]
 ```
 
 ```bash
@@ -60,7 +61,66 @@ synth versions     # Show all versions
 synth doctor       # Health check — verify all child CLIs resolve
 synth skills       # List bundled agent skills
 synth skills path  # Print the skills directory
+synth run list     # List built-in workflows
 ```
+
+## Workflow runner
+
+`synth run` is the orchestration substrate. Workflows call child CLIs, capture structured JSON output, and return a typed workflow state envelope that agents can consume programmatically.
+
+Every workflow supports `--plan` mode (show what will happen, no side effects) and `run` mode (actually execute child CLI commands).
+
+### Built-in workflows
+
+| Workflow | What it does |
+|----------|-------------|
+| `doctor-summary` | Structured health snapshot of all child CLIs |
+| `uniswap-swap` | Check approval → quote → return unsigned tx + permit data |
+| `lido-stake` | Build unsigned Lido staking transaction |
+| `lido-wrap` | Build unsigned stETH → wstETH wrap transaction |
+| `agent-register` | Build unsigned ERC-8004 agent registration transaction |
+
+### Examples
+
+```bash
+# List available workflows
+synth run list
+
+# Plan mode — see what commands will run without executing anything
+synth run uniswap-swap --plan \
+  --token-in 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+  --token-out 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --amount 1000000 --chain-id 1 --wallet 0xYOUR_ADDRESS
+
+# Run mode — actually call child CLIs and return structured output
+synth run uniswap-swap \
+  --token-in 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+  --token-out 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
+  --amount 1000000 --chain-id 1 --wallet 0xYOUR_ADDRESS
+
+# Lido staking
+synth run lido-stake --amount 1.0 --chain-id 1 --wallet 0xYOUR_ADDRESS
+
+# Agent registration (ERC-8004)
+synth run agent-register --uri https://example.com/agent.json --chain-id 1 --wallet 0xYOUR_ADDRESS
+```
+
+### Workflow state envelope
+
+All workflows return a JSON state object:
+
+```json
+{
+  "workflow": "uniswap-swap",
+  "status": "needs_signature",
+  "mode": "run",
+  "steps": ["Validate inputs", "Run check-approval", "Run quote", "Return unsigned tx"],
+  "artifacts": { "approval": {}, "quote": {}, "tx": {}, "permitData": {} },
+  "nextAction": "Sign and send the transaction using your signer backend."
+}
+```
+
+Statuses: `planned`, `needs_approval`, `needs_signature`, `ready_to_send`, `completed`, `failed`.
 
 ## How it works
 
@@ -117,11 +177,12 @@ See [docs/guides/first-swap.md](./docs/guides/first-swap.md) for the full walkth
 
 | CLI | Package | What it does |
 |-----|---------|-------------|
+| `uniswap` | `uniswap-cli` | Token swaps, quotes, approval checks, Permit2 signing |
+| `lido` | `lido-cli` | Liquid staking: stake ETH, wrap/unwrap stETH, withdrawals |
+| `8004` | `8004-cli` | ERC-8004 agent identity: register, lookup, rate, reputation |
+| `filecoin` | `filecoin-cli` | Filecoin storage deals and network operations |
 | `moonpay` | `@moonpay/cli` | Wallet operations, transaction signing, message signing |
-| `uniswap` | `uniswap-cli` | Token swaps, quotes, approval checks (Permit2) |
-| `lido` | `lido-cli` | Liquid staking operations |
-| `8004` | `8004-cli` | 8004 protocol interactions |
-| `filecoin` | `filecoin-cli` | Filecoin network operations |
+| `ows` | `@open-wallet-standard/core` | Chain-agnostic wallet, signing, and transaction send |
 
 ## Docs
 

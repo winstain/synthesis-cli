@@ -23,6 +23,7 @@ The parent should become more useful **without** turning into a monolith.
 - wallet/signing backends now include both MoonPay and OWS in the synthesis docs + routing model
 - local repo docs/skills are aligned to the real command surfaces
 - workflow/orchestration tickets now exist in both GitHub issues and `docs/tickets.md`
+- a minimal `synth run` scaffold is shipped with workflow discovery, `--plan`, and initial built-ins (`doctor-summary`, plus plan-only `uniswap-swap`)
 
 ---
 

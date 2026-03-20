@@ -56,6 +56,11 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 - #25 — Define a workflow state envelope for resumable multi-step execution
 - #26 — Add a built-in `uniswap-swap` workflow
 - #27 — Add `synth run <workflow>` orchestration layer
+- #28 — Add OWS signer adaptation in the workflow layer
+- #29 — Add built-in `lido-stake` and `lido-wrap` workflows
+- #30 — Add `agent-register` and `agent-rate` workflows around `8004-cli`
+- #31 — Persist workflow receipts and intermediate artifacts
+- #32 — Define how skills map onto workflows and how contributors add both
 
 ### child CLIs
 - `uniswap-cli` #6 — Document and harden Permit2 / EIP-712 flow for signer interoperability
@@ -82,9 +87,10 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 - **Notes:** foundational for all workflow work.
 
 ## A2. First-class workflow runner in `synthesis-cli`
-- **Status:** `issue-open`
+- **Status:** `in-progress`
 - **Priority:** `P0`
 - **Issue:** #27
+- **Progress note:** first shippable slice landed (`synth run`, workflow discovery, `--plan`, and built-in `doctor-summary`); resumability and richer workflows remain open.
 - **Title:** Add `synth run <workflow>` orchestration layer
 - **Why it matters:** turns synthesis from thin router into reusable orchestration layer without pulling protocol logic into the parent.
 - **Scope:**
@@ -128,14 +134,32 @@ Goal: make workflows durable, extensible, and contributor-friendly.
   - workflow steps can return resumable state
   - docs/examples show resume semantics clearly
 
+## A5. Signer adapter layer in workflows
+- **Status:** `issue-open`
+- **Priority:** `P0`
+- **Issue:** #28
+- **Title:** Add OWS signer adaptation in the workflow layer
+- **Why it matters:** child CLIs should stay signer-agnostic, but workflows still need to turn canonical EVM tx objects into OWS-signable serialized transactions.
+- **Scope:**
+  - accept canonical child-CLI tx objects like `{ to, data, value, chainId, from? }`
+  - fetch nonce / gas / fee data as needed
+  - serialize unsigned EIP-1559 transactions for OWS
+  - support `ows sign tx` / `ows sign send-tx` as workflow-level execution steps
+- **Acceptance criteria:**
+  - no signer-specific payloads are required from child CLIs
+  - workflows can derive OWS-ready tx input from canonical tx objects
+  - docs explain that OWS conversion lives in skills/workflows, not child CLIs
+- **Dependencies:** A1
+
 ---
 
 # Milestone B — First built-in workflows
 
 ## B1. Built-in workflow: Uniswap full swap
-- **Status:** `issue-open`
+- **Status:** `in-progress`
 - **Priority:** `P0`
 - **Issue:** #26
+- **Progress note:** first slice shipped as plan-first built-in (`uniswap-swap`) that returns signer-boundary state without signing/send execution.
 - **Title:** Add a built-in `uniswap-swap` workflow
 - **Why it matters:** this is the flagship demo of the stack: approval check → quote → Permit2 sign → tx sign → tx send.
 - **Scope:**
@@ -149,35 +173,39 @@ Goal: make workflows durable, extensible, and contributor-friendly.
   - docs show the end-to-end flow
 
 ## B2. Built-in workflows: Lido stake / wrap
-- **Status:** `backlog`
+- **Status:** `issue-open`
 - **Priority:** `P1`
-- **Issue:** none yet
+- **Issue:** #29
 - **Title:** Add built-in `lido-stake` and `lido-wrap` workflows
 - **Why it matters:** proves synthesis is a multi-protocol orchestration system, not just a Uniswap shell.
 - **Scope:**
   - implement `lido-stake`
   - implement `lido-wrap`
   - model approval requirements for wrapping when relevant
-  - integrate MoonPay signing/send flow
+  - use the returned base tx object as the canonical contract
+  - let the workflow layer perform signer-specific conversion (for example OWS tx serialization)
 - **Acceptance criteria:**
   - both workflows support plan mode
   - both workflows emit structured results
   - docs explain when approval is needed
+  - child CLIs remain signer-agnostic
 - **Dependencies:** A1–A4
 
 ## B3. Built-in workflows: ERC-8004 identity / receipts
-- **Status:** `backlog`
+- **Status:** `issue-open`
 - **Priority:** `P1`
-- **Issue:** none yet
+- **Issue:** #30
 - **Title:** Add `agent-register` / `agent-rate` workflows around `8004-cli`
 - **Why it matters:** makes ERC-8004 central to the synthesis story rather than just an adjacent protocol CLI.
 - **Scope:**
   - add workflow for registration from URI
   - add workflow for rating / receipts
   - preserve identity-related artifacts for submission/demo evidence
+  - keep signer-specific conversion in the workflow layer, not in `8004-cli`
 - **Acceptance criteria:**
   - workflows produce structured outputs and clear next steps
   - docs position these workflows as part of agent identity / receipts
+  - child CLI output remains canonical / signer-agnostic
 - **Dependencies:** A1–A4
 
 ## B4. Child-CLI hardening to support workflows
@@ -199,24 +227,25 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 # Milestone C — Receipts + contribution model
 
 ## C1. Workflow receipts / artifacts
-- **Status:** `backlog`
+- **Status:** `issue-open`
 - **Priority:** `P1`
-- **Issue:** none yet
+- **Issue:** #31
 - **Title:** Persist workflow receipts and intermediate artifacts
 - **Why it matters:** receipts strengthen demos, debugging, ERC-8004 framing, and future Filecoin storage integration.
 - **Scope:**
   - save workflow runs to local JSON artifacts
   - include timestamps, workflow name, produced artifacts, tx hashes, statuses
   - define a predictable on-disk location
+  - include both canonical child-CLI outputs and workflow-produced execution artifacts
 - **Acceptance criteria:**
   - workflow runs can optionally persist artifacts
   - saved output is documented and stable
   - receipts are useful for demos and submission evidence
 
 ## C2. Skills → workflows contribution path
-- **Status:** `backlog`
+- **Status:** `issue-open`
 - **Priority:** `P1`
-- **Issue:** none yet
+- **Issue:** #32
 - **Title:** Define how skills map onto workflows and how contributors add both
 - **Why it matters:** the long-term leverage is not only internal workflows, but a contribution model where people can add new CLIs plus workflows plus skill guidance coherently.
 - **Scope:**
@@ -224,6 +253,7 @@ Goal: make workflows durable, extensible, and contributor-friendly.
   - define contribution checklist for adding a new child CLI
   - define contribution checklist for adding a new built-in workflow
   - explain when something should stay a skill vs become executable workflow code
+  - explain that signer-specific adaptation belongs in skills/workflows, not child CLIs
 - **Acceptance criteria:**
   - docs explain `tool -> skill -> workflow` layering clearly
   - new contributors can add a CLI/workflow pair without guessing architecture
@@ -267,6 +297,7 @@ Goal: make workflows durable, extensible, and contributor-friendly.
 - A2 — workflow runner
 - A3 — plan mode
 - A4 — resumable state
+- A5 — signer adapter layer in workflows (OWS tx serialization from canonical tx objects)
 - B1 — uniswap-swap workflow
 
 ### Do next

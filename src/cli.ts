@@ -29,6 +29,7 @@ Usage:
   synth skills        List available agent skills
   synth skills path   Print path to skills directory
   synth skills show <name>  Print a skill's content
+  synth run <workflow> [--plan] [--key value ...]
 
 Examples:
   synth uniswap swap --help
@@ -36,6 +37,7 @@ Examples:
   synth lido stake 1
   synth 8004 status
   synth doctor
+  synth run doctor-summary --plan
 
 Philosophy:
   synth does not reimplement child CLI logic.
@@ -217,6 +219,391 @@ export function runDoctor(require: NodeRequire): number {
   return allOk ? 0 : 1;
 }
 
+export type WorkflowStatus =
+  | 'planned'
+  | 'needs_approval'
+  | 'needs_signature'
+  | 'ready_to_send'
+  | 'completed'
+  | 'failed';
+
+export type WorkflowState = {
+  workflow: string;
+  status: WorkflowStatus;
+  mode: 'plan' | 'run';
+  steps: string[];
+  artifacts: Record<string, unknown>;
+  nextAction: string | null;
+};
+
+type WorkflowContext = {
+  require: NodeRequire;
+  input: Record<string, string | boolean>;
+};
+
+type WorkflowDefinition = {
+  name: string;
+  description: string;
+  plan: (context: WorkflowContext) => WorkflowState;
+  run: (context: WorkflowContext) => WorkflowState;
+};
+
+function parseWorkflowInput(args: string[]): Record<string, string | boolean> {
+  const out: Record<string, string | boolean> = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const current = args[i];
+    if (!current.startsWith('--')) continue;
+    const key = current.slice(2);
+    const next = args[i + 1];
+    if (!next || next.startsWith('--')) {
+      out[key] = true;
+      continue;
+    }
+    out[key] = next;
+    i += 1;
+  }
+  return out;
+}
+
+function readInputString(input: Record<string, string | boolean>, key: string): string | null {
+  const value = input[key];
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+function missingWorkflowKeys(input: Record<string, string | boolean>, keys: string[]): string[] {
+  return keys.filter((key) => readInputString(input, key) === null);
+}
+
+function parseJsonOutput(buffer?: Buffer): unknown {
+  if (!buffer) return null;
+  const text = buffer.toString().trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+type ChildRunResult =
+  | { ok: true; command: string[]; output: unknown }
+  | { ok: false; command: string[]; error: string; output: unknown };
+
+function runChildJson(command: RouteName, args: string[]): ChildRunResult {
+  let binPath: string;
+  try {
+    binPath = resolveBinPath(command);
+  } catch (error) {
+    const msg = String(error);
+    return { ok: false, command: [command, ...args], error: `Failed to resolve '${command}': ${msg}`, output: null };
+  }
+
+  const fullCommand = [binPath, ...args];
+  const result = spawnSync(process.execPath, fullCommand, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const output = parseJsonOutput(result.stdout);
+
+  if (result.error) {
+    const msg = result.error.message || String(result.error);
+    return { ok: false, command: [command, ...args], error: msg, output };
+  }
+
+  if (result.status !== 0) {
+    const stderr = String(result.stderr ?? '').trim();
+    return { ok: false, command: [command, ...args], error: stderr, output };
+  }
+
+  return { ok: true, command: [command, ...args], output };
+}
+
+export const WORKFLOWS: Record<string, WorkflowDefinition> = {
+  'doctor-summary': {
+    name: 'doctor-summary',
+    description: 'Collect a structured child-CLI health snapshot with no side effects.',
+    plan: ({ input }) => ({
+      workflow: 'doctor-summary',
+      status: 'planned',
+      mode: 'plan',
+      steps: ['Inspect registered child CLIs', 'Return a machine-readable health summary'],
+      artifacts: {
+        input,
+        expected: ['children[]', 'summary'],
+      },
+      nextAction: 'Run without --plan to execute.',
+    }),
+    run: ({ require, input }) => {
+      const children = getChildInfo(require);
+      const healthyChildren = children.filter((child) => child.version !== null && child.binExists).length;
+      return {
+        workflow: 'doctor-summary',
+        status: 'completed',
+        mode: 'run',
+        steps: ['Inspect registered child CLIs', 'Return a machine-readable health summary'],
+        artifacts: {
+          input,
+          children,
+          summary: {
+            total: children.length,
+            healthy: healthyChildren,
+            unhealthy: children.length - healthyChildren,
+          },
+        },
+        nextAction: healthyChildren === children.length ? null : 'Run `synth doctor` for formatted diagnostics.',
+      };
+    },
+  },
+  'uniswap-swap': {
+    name: 'uniswap-swap',
+    description: 'Check approval + quote a Uniswap swap and return unsigned tx payloads.',
+    plan: ({ input }) => {
+      const requiredKeys = ['token-in', 'token-out', 'amount', 'chain-id', 'wallet'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      const steps = [
+        'Validate required swap inputs',
+        'Run `uniswap check-approval` for token allowance status',
+        'Run `uniswap quote` to get route, permit data, and unsigned tx',
+        'Pause for signer to sign and send transaction',
+      ];
+
+      return {
+        workflow: 'uniswap-swap',
+        status: missing.length > 0 ? 'failed' : 'planned',
+        mode: 'plan',
+        steps,
+        artifacts: {
+          input,
+          requirements: requiredKeys,
+          missing,
+          commands: [
+            ['uniswap', 'check-approval', '--token', String(input['token-in']), '--amount', String(input.amount), '--chain', String(input['chain-id']), '--wallet', String(input.wallet)],
+            ['uniswap', 'quote', '--from', String(input['token-in']), '--to', String(input['token-out']), '--amount', String(input.amount), '--chain', String(input['chain-id']), '--wallet', String(input.wallet)],
+          ],
+        },
+        nextAction: missing.length > 0
+          ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}`
+          : 'Run `synth run uniswap-swap` to execute checks and build signer-ready output.',
+      };
+    },
+    run: ({ input }) => {
+      const requiredKeys = ['token-in', 'token-out', 'amount', 'chain-id', 'wallet'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      const steps = [
+        'Validate required swap inputs',
+        'Run `uniswap check-approval`',
+        'Run `uniswap quote`',
+        'Return unsigned transaction bundle for signer',
+      ];
+
+      if (missing.length > 0) {
+        return {
+          workflow: 'uniswap-swap',
+          status: 'failed',
+          mode: 'run',
+          steps,
+          artifacts: { input, missing },
+          nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}`,
+        };
+      }
+
+      const approval = runChildJson('uniswap', ['check-approval', '--token', input['token-in'] as string, '--amount', input.amount as string, '--chain', input['chain-id'] as string, '--wallet', input.wallet as string]);
+      if (!approval.ok) {
+        return {
+          workflow: 'uniswap-swap',
+          status: 'failed',
+          mode: 'run',
+          steps,
+          artifacts: { input, failedCommand: approval.command, error: approval.error, output: approval.output },
+          nextAction: 'Fix the error and retry.',
+        };
+      }
+
+      const quote = runChildJson('uniswap', ['quote', '--from', input['token-in'] as string, '--to', input['token-out'] as string, '--amount', input.amount as string, '--chain', input['chain-id'] as string, '--wallet', input.wallet as string]);
+      if (!quote.ok) {
+        return {
+          workflow: 'uniswap-swap',
+          status: 'failed',
+          mode: 'run',
+          steps,
+          artifacts: { input, failedCommand: quote.command, approval: approval.output, error: quote.error, output: quote.output },
+          nextAction: 'Fix the error and retry.',
+        };
+      }
+
+      const quoteObj = (quote.output ?? {}) as Record<string, unknown>;
+
+      return {
+        workflow: 'uniswap-swap',
+        status: 'needs_signature',
+        mode: 'run',
+        steps,
+        artifacts: {
+          input,
+          approval: approval.output,
+          quote: quote.output,
+          tx: quoteObj.tx ?? null,
+          permitData: quoteObj.permitData ?? null,
+          commands: [approval.command, quote.command],
+        },
+        nextAction: 'Sign and send the transaction using your signer backend.',
+      };
+    },
+  },
+  'lido-stake': {
+    name: 'lido-stake',
+    description: 'Build an unsigned Lido stake transaction.',
+    plan: ({ input }) => {
+      const requiredKeys = ['amount', 'chain-id'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      return {
+        workflow: 'lido-stake',
+        status: missing.length > 0 ? 'failed' : 'planned',
+        mode: 'plan',
+        steps: ['Validate required inputs', 'Run `lido stake` to build tx payload', 'Pause for signing + send'],
+        artifacts: {
+          input,
+          requirements: requiredKeys,
+          missing,
+          command: (() => {
+            const c = ['lido', 'stake', String(input.amount), '--chain', String(input['chain-id'])];
+            if (readInputString(input, 'wallet')) c.push('--wallet', input.wallet as string);
+            return c;
+          })(),
+        },
+        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
+      };
+    },
+    run: ({ input }) => {
+      const requiredKeys = ['amount', 'chain-id'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      const steps = ['Validate required inputs', 'Run `lido stake` to build tx payload', 'Pause for signing + send'];
+      if (missing.length > 0) {
+        return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, missing }, nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}` };
+      }
+      const args = ['stake', input.amount as string, '--chain', input['chain-id'] as string];
+      if (readInputString(input, 'wallet')) args.push('--wallet', input.wallet as string);
+      const result = runChildJson('lido', args);
+      if (!result.ok) {
+        return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
+      }
+      return { workflow: 'lido-stake', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+    },
+  },
+  'lido-wrap': {
+    name: 'lido-wrap',
+    description: 'Build an unsigned Lido wrap transaction.',
+    plan: ({ input }) => {
+      const requiredKeys = ['amount', 'chain-id'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      return {
+        workflow: 'lido-wrap',
+        status: missing.length > 0 ? 'failed' : 'planned',
+        mode: 'plan',
+        steps: ['Validate required inputs', 'Run `lido wrap` to build tx payload', 'Pause for signing + send'],
+        artifacts: {
+          input,
+          requirements: requiredKeys,
+          missing,
+          command: (() => {
+            const c = ['lido', 'wrap', String(input.amount), '--chain', String(input['chain-id'])];
+            if (readInputString(input, 'wallet')) c.push('--wallet', input.wallet as string);
+            return c;
+          })(),
+        },
+        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
+      };
+    },
+    run: ({ input }) => {
+      const requiredKeys = ['amount', 'chain-id'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      const steps = ['Validate required inputs', 'Run `lido wrap` to build tx payload', 'Pause for signing + send'];
+      if (missing.length > 0) {
+        return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, missing }, nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}` };
+      }
+      const args = ['wrap', input.amount as string, '--chain', input['chain-id'] as string];
+      if (readInputString(input, 'wallet')) args.push('--wallet', input.wallet as string);
+      const result = runChildJson('lido', args);
+      if (!result.ok) {
+        return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
+      }
+      return { workflow: 'lido-wrap', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+    },
+  },
+  'agent-register': {
+    name: 'agent-register',
+    description: 'Build an unsigned 8004 agent registration transaction.',
+    plan: ({ input }) => {
+      const requiredKeys = ['uri', 'chain-id'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      return {
+        workflow: 'agent-register',
+        status: missing.length > 0 ? 'failed' : 'planned',
+        mode: 'plan',
+        steps: ['Validate required inputs', 'Run `8004 register` to build tx payload', 'Pause for signing + send'],
+        artifacts: {
+          input,
+          requirements: requiredKeys,
+          missing,
+          command: (() => {
+            const c = ['8004', 'register', '--uri', String(input.uri), '--chain', String(input['chain-id'])];
+            if (readInputString(input, 'wallet')) c.push('--wallet', input.wallet as string);
+            return c;
+          })(),
+        },
+        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
+      };
+    },
+    run: ({ input }) => {
+      const requiredKeys = ['uri', 'chain-id'];
+      const missing = missingWorkflowKeys(input, requiredKeys);
+      const steps = ['Validate required inputs', 'Run `8004 register` to build tx payload', 'Pause for signing + send'];
+      if (missing.length > 0) {
+        return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, missing }, nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}` };
+      }
+      const args = ['register', '--uri', input.uri as string, '--chain', input['chain-id'] as string];
+      if (readInputString(input, 'wallet')) args.push('--wallet', input.wallet as string);
+      const result = runChildJson('8004', args);
+      if (!result.ok) {
+        return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
+      }
+      return { workflow: 'agent-register', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+    },
+  },
+};
+
+export function listWorkflows(): Array<{ name: string; description: string }> {
+  return Object.values(WORKFLOWS).map((workflow) => ({
+    name: workflow.name,
+    description: workflow.description,
+  }));
+}
+
+export function runWorkflow(subArgs: string[], require: NodeRequire): number {
+  const [workflowName, ...workflowArgs] = subArgs;
+
+  if (!workflowName || workflowName === 'list') {
+    const workflows = listWorkflows();
+    process.stdout.write('Available workflows:\n\n');
+    for (const workflow of workflows) {
+      process.stdout.write(`  ${workflow.name.padEnd(18)} ${workflow.description}\n`);
+    }
+    return 0;
+  }
+
+  const workflow = WORKFLOWS[workflowName];
+  if (!workflow) {
+    process.stderr.write(`Unknown workflow: ${workflowName}\n`);
+    return 1;
+  }
+
+  const input = parseWorkflowInput(workflowArgs);
+  const planMode = workflowArgs.includes('--plan');
+  const state = planMode
+    ? workflow.plan({ require, input })
+    : workflow.run({ require, input });
+
+  process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
+  return state.status === 'failed' ? 1 : 0;
+}
+
 export function resolveBinPath(command: RouteName): string {
   const route = ROUTES[command];
   const require = createRequire(import.meta.url);
@@ -260,6 +647,7 @@ export function run(
   if (command === 'versions') return runVersions(require);
   if (command === 'doctor') return runDoctor(require);
   if (command === 'skills') return runSkills(forwardedArgs);
+  if (command === 'run') return runWorkflow(forwardedArgs, require);
 
   if (!(command in ROUTES)) {
     process.stderr.write(`Unknown command: ${command}\n\n${helpText()}\n`);
