@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
+import { createPublicClient, http, serializeTransaction } from 'viem';
 
 export const ROUTES = {
   moonpay: { packageName: '@moonpay/cli', bin: 'moonpay' },
@@ -236,6 +237,21 @@ export type WorkflowState = {
   nextAction: string | null;
 };
 
+type GenericUnsignedTx = {
+  to: string;
+  data?: string;
+  value?: string | number | bigint;
+  chainId: string | number;
+  from?: string;
+};
+
+type OwsSerialization = {
+  unsignedTxHex: string;
+  signCommand: string;
+  sendCommand: string;
+  rpcUrl: string;
+};
+
 type WorkflowContext = {
   require: NodeRequire;
   input: Record<string, string | boolean>;
@@ -245,7 +261,7 @@ type WorkflowDefinition = {
   name: string;
   description: string;
   plan: (context: WorkflowContext) => WorkflowState;
-  run: (context: WorkflowContext) => WorkflowState;
+  run: (context: WorkflowContext) => WorkflowState | Promise<WorkflowState>;
 };
 
 function parseWorkflowInput(args: string[]): Record<string, string | boolean> {
@@ -313,6 +329,92 @@ function runChildJson(command: RouteName, args: string[]): ChildRunResult {
   }
 
   return { ok: true, command: [command, ...args], output };
+}
+
+function getRpcUrlForChain(chainId: number): string | null {
+  if (chainId === 1) return 'https://eth.llamarpc.com';
+  if (chainId === 137) return 'https://polygon-rpc.com';
+  if (chainId === 8453) return 'https://mainnet.base.org';
+  if (chainId === 42161) return 'https://arb1.arbitrum.io/rpc';
+  if (chainId === 10) return 'https://mainnet.optimism.io';
+  return null;
+}
+
+function parseChainId(value: string | number): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  if (value.startsWith('0x')) {
+    const parsed = Number.parseInt(value, 16);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseBigIntValue(value: string | number | bigint | undefined): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') return BigInt(Math.max(0, Math.trunc(value)));
+  if (typeof value === 'string' && value.trim() !== '') return BigInt(value);
+  return 0n;
+}
+
+function extractTxObject(output: unknown): GenericUnsignedTx | null {
+  if (!output || typeof output !== 'object') return null;
+  const candidate = output as Record<string, unknown>;
+  if (typeof candidate.to !== 'string' || (!candidate.chainId && candidate.chainId !== 0)) return null;
+  return {
+    to: candidate.to,
+    data: typeof candidate.data === 'string' ? candidate.data : undefined,
+    value: candidate.value as string | number | bigint | undefined,
+    chainId: candidate.chainId as string | number,
+  };
+}
+
+export async function serializeForOws(tx: GenericUnsignedTx): Promise<OwsSerialization | null> {
+  try {
+    const chainId = parseChainId(tx.chainId);
+    if (chainId === null) return null;
+    const rpcUrl = getRpcUrlForChain(chainId);
+    if (!rpcUrl) return null;
+
+    const client = createPublicClient({ transport: http(rpcUrl) });
+    const requestBase = {
+      to: tx.to as `0x${string}`,
+      data: (tx.data ?? '0x') as `0x${string}`,
+      value: parseBigIntValue(tx.value),
+    };
+
+    const nonce = tx.from
+      ? await client.getTransactionCount({ address: tx.from as `0x${string}` })
+      : 0;
+
+    const gas = await client.estimateGas({
+      ...requestBase,
+      ...(tx.from ? { account: tx.from as `0x${string}` } : {}),
+    });
+    const feeData = await client.estimateFeesPerGas();
+
+    const unsignedTxHex = serializeTransaction({
+      type: 'eip1559',
+      chainId,
+      to: requestBase.to,
+      data: requestBase.data,
+      value: requestBase.value,
+      nonce,
+      gas,
+      maxFeePerGas: feeData.maxFeePerGas,
+      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+    });
+
+    return {
+      unsignedTxHex,
+      signCommand: `ows sign tx --wallet <wallet-name> --chain evm --tx-hex ${unsignedTxHex}`,
+      sendCommand: `ows sign send-tx --wallet <wallet-name> --chain evm --tx-hex ${unsignedTxHex} --rpc-url ${rpcUrl}`,
+      rpcUrl,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export const WORKFLOWS: Record<string, WorkflowDefinition> = {
@@ -383,7 +485,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
           : 'Run `synth run uniswap-swap` to execute checks and build signer-ready output.',
       };
     },
-    run: ({ input }) => {
+    run: async ({ input }) => {
       const requiredKeys = ['token-in', 'token-out', 'amount', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       const steps = [
@@ -429,6 +531,10 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
       }
 
       const quoteObj = (quote.output ?? {}) as Record<string, unknown>;
+      const txCandidate = extractTxObject(quoteObj.tx);
+      const ows = txCandidate
+        ? await serializeForOws({ ...txCandidate, from: input.wallet as string })
+        : null;
 
       return {
         workflow: 'uniswap-swap',
@@ -441,6 +547,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
           quote: quote.output,
           tx: quoteObj.tx ?? null,
           permitData: quoteObj.permitData ?? null,
+          ...(ows ? { ows } : {}),
           commands: [approval.command, quote.command],
         },
         nextAction: 'Sign and send the transaction using your signer backend.',
@@ -471,7 +578,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
         nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
       };
     },
-    run: ({ input }) => {
+    run: async ({ input }) => {
       const requiredKeys = ['amount', 'chain-id'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       const steps = ['Validate required inputs', 'Run `lido stake` to build tx payload', 'Pause for signing + send'];
@@ -484,7 +591,12 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
       if (!result.ok) {
         return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
       }
-      return { workflow: 'lido-stake', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+      const txCandidate = extractTxObject(result.output);
+      const wallet = readInputString(input, 'wallet');
+      const ows = txCandidate
+        ? await serializeForOws(wallet ? { ...txCandidate, from: wallet } : txCandidate)
+        : null;
+      return { workflow: 'lido-stake', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
     },
   },
   'lido-wrap': {
@@ -511,7 +623,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
         nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
       };
     },
-    run: ({ input }) => {
+    run: async ({ input }) => {
       const requiredKeys = ['amount', 'chain-id'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       const steps = ['Validate required inputs', 'Run `lido wrap` to build tx payload', 'Pause for signing + send'];
@@ -524,7 +636,12 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
       if (!result.ok) {
         return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
       }
-      return { workflow: 'lido-wrap', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+      const txCandidate = extractTxObject(result.output);
+      const wallet = readInputString(input, 'wallet');
+      const ows = txCandidate
+        ? await serializeForOws(wallet ? { ...txCandidate, from: wallet } : txCandidate)
+        : null;
+      return { workflow: 'lido-wrap', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
     },
   },
   'agent-register': {
@@ -551,7 +668,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
         nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
       };
     },
-    run: ({ input }) => {
+    run: async ({ input }) => {
       const requiredKeys = ['uri', 'chain-id'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       const steps = ['Validate required inputs', 'Run `8004 register` to build tx payload', 'Pause for signing + send'];
@@ -564,7 +681,12 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
       if (!result.ok) {
         return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
       }
-      return { workflow: 'agent-register', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+      const txCandidate = extractTxObject(result.output);
+      const wallet = readInputString(input, 'wallet');
+      const ows = txCandidate
+        ? await serializeForOws(wallet ? { ...txCandidate, from: wallet } : txCandidate)
+        : null;
+      return { workflow: 'agent-register', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
     },
   },
 };
@@ -576,7 +698,7 @@ export function listWorkflows(): Array<{ name: string; description: string }> {
   }));
 }
 
-export function runWorkflow(subArgs: string[], require: NodeRequire): number {
+export async function runWorkflow(subArgs: string[], require: NodeRequire): Promise<number> {
   const [workflowName, ...workflowArgs] = subArgs;
 
   if (!workflowName || workflowName === 'list') {
@@ -598,7 +720,7 @@ export function runWorkflow(subArgs: string[], require: NodeRequire): number {
   const planMode = workflowArgs.includes('--plan');
   const state = planMode
     ? workflow.plan({ require, input })
-    : workflow.run({ require, input });
+    : await workflow.run({ require, input });
 
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
   return state.status === 'failed' ? 1 : 0;

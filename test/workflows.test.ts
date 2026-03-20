@@ -2,6 +2,16 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 
 const spawnSyncMock = vi.fn();
+const getTransactionCountMock = vi.fn();
+const estimateGasMock = vi.fn();
+const estimateFeesPerGasMock = vi.fn();
+const httpMock = vi.fn((url: string) => ({ url }));
+const createPublicClientMock = vi.fn(() => ({
+  getTransactionCount: getTransactionCountMock,
+  estimateGas: estimateGasMock,
+  estimateFeesPerGas: estimateFeesPerGasMock,
+}));
+const serializeTransactionMock = vi.fn();
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>();
   return {
@@ -9,6 +19,12 @@ vi.mock('node:child_process', async (importOriginal) => {
     spawnSync: spawnSyncMock,
   };
 });
+
+vi.mock('viem', () => ({
+  createPublicClient: createPublicClientMock,
+  http: httpMock,
+  serializeTransaction: serializeTransactionMock,
+}));
 
 const cli = await import('../src/cli.js');
 const require = createRequire(import.meta.url);
@@ -21,6 +37,12 @@ describe('workflow runner', () => {
     stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true as any);
     stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true as any);
     spawnSyncMock.mockReset();
+    getTransactionCountMock.mockReset().mockResolvedValue(7);
+    estimateGasMock.mockReset().mockResolvedValue(21_000n);
+    estimateFeesPerGasMock.mockReset().mockResolvedValue({ maxFeePerGas: 2n, maxPriorityFeePerGas: 1n });
+    serializeTransactionMock.mockReset().mockReturnValue('0xserialized');
+    httpMock.mockClear();
+    createPublicClientMock.mockClear();
   });
 
   afterEach(() => {
@@ -28,8 +50,8 @@ describe('workflow runner', () => {
     stderrWrite.mockRestore();
   });
 
-  it('lists workflows when called with no workflow name', () => {
-    const code = cli.runWorkflow([], require);
+  it('lists workflows when called with no workflow name', async () => {
+    const code = await cli.runWorkflow([], require);
     expect(code).toBe(0);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     expect(output).toContain('Available workflows');
@@ -37,8 +59,8 @@ describe('workflow runner', () => {
     expect(output).toContain('lido-stake');
   });
 
-  it('supports --plan mode and returns planned status', () => {
-    const code = cli.runWorkflow(['doctor-summary', '--plan'], require);
+  it('supports --plan mode and returns planned status', async () => {
+    const code = await cli.runWorkflow(['doctor-summary', '--plan'], require);
     expect(code).toBe(0);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     const json = JSON.parse(output);
@@ -47,8 +69,8 @@ describe('workflow runner', () => {
     expect(json.mode).toBe('plan');
   });
 
-  it('runs workflow and returns structured completed state', () => {
-    const code = cli.runWorkflow(['doctor-summary'], require);
+  it('runs workflow and returns structured completed state', async () => {
+    const code = await cli.runWorkflow(['doctor-summary'], require);
     expect(code).toBe(0);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     const json = JSON.parse(output);
@@ -58,11 +80,11 @@ describe('workflow runner', () => {
     expect(json.artifacts.summary.total).toBeGreaterThan(0);
   });
 
-  it('doctor-summary sets nextAction when unhealthy children exist', () => {
+  it('doctor-summary sets nextAction when unhealthy children exist', async () => {
     const original = cli.ROUTES.uniswap;
     (cli.ROUTES as any).uniswap = { packageName: 'definitely-missing-uniswap', bin: 'uniswap' };
     try {
-      const code = cli.runWorkflow(['doctor-summary'], require);
+      const code = await cli.runWorkflow(['doctor-summary'], require);
       expect(code).toBe(0);
       const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
       const json = JSON.parse(output);
@@ -72,15 +94,15 @@ describe('workflow runner', () => {
     }
   });
 
-  it('returns 1 for unknown workflows', () => {
-    const code = cli.runWorkflow(['missing-workflow'], require);
+  it('returns 1 for unknown workflows', async () => {
+    const code = await cli.runWorkflow(['missing-workflow'], require);
     expect(code).toBe(1);
     const errOutput = stderrWrite.mock.calls.map((c: any) => c[0]).join('');
     expect(errOutput).toContain('Unknown workflow');
   });
 
-  it('supports uniswap-swap plan mode with required inputs', () => {
-    const code = cli.runWorkflow(
+  it('supports uniswap-swap plan mode with required inputs', async () => {
+    const code = await cli.runWorkflow(
       ['uniswap-swap', 'ignored-positional', '--plan', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'],
       require,
     );
@@ -93,8 +115,8 @@ describe('workflow runner', () => {
     expect(json.artifacts.commands).toHaveLength(2);
   });
 
-  it('returns failed state when uniswap-swap required inputs are missing', () => {
-    const code = cli.runWorkflow(['uniswap-swap', '--plan', '--token-in', 'WETH'], require);
+  it('returns failed state when uniswap-swap required inputs are missing', async () => {
+    const code = await cli.runWorkflow(['uniswap-swap', '--plan', '--token-in', 'WETH'], require);
     expect(code).toBe(1);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     const json = JSON.parse(output);
@@ -106,19 +128,19 @@ describe('workflow runner', () => {
     expect(json.artifacts.missing).toContain('wallet');
   });
 
-  it('uniswap-swap run returns failed when required inputs are missing', () => {
-    const code = cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH'], require);
+  it('uniswap-swap run returns failed when required inputs are missing', async () => {
+    const code = await cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH'], require);
     expect(code).toBe(1);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     expect(JSON.parse(output).status).toBe('failed');
   });
 
-  it('uniswap-swap run executes approval+quote and returns needs_signature', () => {
+  it('uniswap-swap run executes approval+quote and returns needs_signature', async () => {
     spawnSyncMock
       .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"approved":true}'), stderr: Buffer.from('') })
-      .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"tx":{"to":"0x1"},"permitData":{"x":1}}'), stderr: Buffer.from('') });
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"tx":{"to":"0x1","data":"0x","value":"0","chainId":1},"permitData":{"x":1}}'), stderr: Buffer.from('') });
 
-    const code = cli.runWorkflow(
+    const code = await cli.runWorkflow(
       ['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'],
       require,
     );
@@ -132,12 +154,15 @@ describe('workflow runner', () => {
     expect(json.status).toBe('needs_signature');
     expect(json.artifacts.approval.approved).toBe(true);
     expect(json.artifacts.tx.to).toBe('0x1');
+    expect(json.artifacts.ows.unsignedTxHex).toBe('0xserialized');
+    expect(json.artifacts.ows.signCommand).toContain('ows sign tx --wallet <wallet-name> --chain evm --tx-hex 0xserialized');
+    expect(json.artifacts.ows.sendCommand).toContain('--rpc-url https://eth.llamarpc.com');
   });
 
-  it('uniswap-swap run handles child command failure', () => {
+  it('uniswap-swap run handles child command failure', async () => {
     spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: Buffer.from('{"foo":1}'), stderr: Buffer.from('bad') });
 
-    const code = cli.runWorkflow(
+    const code = await cli.runWorkflow(
       ['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'],
       require,
     );
@@ -152,7 +177,7 @@ describe('workflow runner', () => {
     spawnSyncMock
       .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"approved":true}'), stderr: Buffer.from('') })
       .mockReturnValueOnce({ status: 1, stdout: Buffer.from('{"foo":2}'), stderr: Buffer.from('quote bad') });
-    const quoteFail = cli.runWorkflow(
+    const quoteFail = await cli.runWorkflow(
       ['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'],
       require,
     );
@@ -163,19 +188,19 @@ describe('workflow runner', () => {
     expect(json.artifacts.error).toContain('quote bad');
   });
 
-  it('lido-stake plan + missing + run and optional wallet', () => {
-    const planCode = cli.runWorkflow(['lido-stake', '--plan', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+  it('lido-stake plan + missing + run and optional wallet', async () => {
+    const planCode = await cli.runWorkflow(['lido-stake', '--plan', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(planCode).toBe(0);
     let output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     expect(JSON.parse(output).status).toBe('planned');
 
     stdoutWrite.mockClear();
-    const missing = cli.runWorkflow(['lido-stake', '--amount', '10'], require);
+    const missing = await cli.runWorkflow(['lido-stake', '--amount', '10'], require);
     expect(missing).toBe(1);
 
     stdoutWrite.mockClear();
     spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x2"}'), stderr: Buffer.from('') });
-    const runCode = cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+    const runCode = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(runCode).toBe(0);
     output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     const json = JSON.parse(output);
@@ -183,16 +208,16 @@ describe('workflow runner', () => {
     expect(json.artifacts.tx.to).toBe('0x2');
   });
 
-  it('lido-wrap plan, missing input, failure and success handling', () => {
-    const plan = cli.runWorkflow(['lido-wrap', '--plan', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+  it('lido-wrap plan, missing input, failure and success handling', async () => {
+    const plan = await cli.runWorkflow(['lido-wrap', '--plan', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(plan).toBe(0);
 
-    const missing = cli.runWorkflow(['lido-wrap', '--amount', '10'], require);
+    const missing = await cli.runWorkflow(['lido-wrap', '--amount', '10'], require);
     expect(missing).toBe(1);
 
     stdoutWrite.mockClear();
     spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: Buffer.from('not-json'), stderr: Buffer.from('wrap fail') });
-    const failed = cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
+    const failed = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
     expect(failed).toBe(1);
     let output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     let json = JSON.parse(output);
@@ -201,31 +226,31 @@ describe('workflow runner', () => {
 
     stdoutWrite.mockClear();
     spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x3"}'), stderr: Buffer.from('') });
-    const ok = cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
+    const ok = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
     expect(ok).toBe(0);
     output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     json = JSON.parse(output);
     expect(json.status).toBe('needs_signature');
   });
 
-  it('agent-register plan/missing/success, and resolve failure path', () => {
-    const plan = cli.runWorkflow(['agent-register', '--plan', '--uri', 'ipfs://abc', '--chain-id', '1', '--wallet', '0xabc'], require);
+  it('agent-register plan/missing/success, and resolve failure path', async () => {
+    const plan = await cli.runWorkflow(['agent-register', '--plan', '--uri', 'ipfs://abc', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(plan).toBe(0);
 
     stdoutWrite.mockClear();
-    const missing = cli.runWorkflow(['agent-register', '--chain-id', '1'], require);
+    const missing = await cli.runWorkflow(['agent-register', '--chain-id', '1'], require);
     expect(missing).toBe(1);
 
     stdoutWrite.mockClear();
     spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x4"}'), stderr: Buffer.from('') });
-    const success = cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1', '--wallet', '0xabc'], require);
+    const success = await cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(success).toBe(0);
 
     stdoutWrite.mockClear();
     const original = cli.ROUTES['8004'];
     (cli.ROUTES as any)['8004'] = { packageName: 'definitely-missing-8004', bin: '8004' };
     try {
-      const code = cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
+      const code = await cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
       expect(code).toBe(1);
       const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
       const json = JSON.parse(output);
@@ -236,34 +261,34 @@ describe('workflow runner', () => {
     }
   });
 
-  it('handles child execution error object fallback string path', () => {
+  it('handles child execution error object fallback string path', async () => {
     spawnSyncMock.mockReturnValueOnce({
       status: 0,
       stdout: Buffer.from(''),
       stderr: Buffer.from(''),
       error: { message: '', toString: () => 'spawn fallback' },
     });
-    const code = cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1'], require);
+    const code = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1'], require);
     expect(code).toBe(1);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     const json = JSON.parse(output);
     expect(String(json.artifacts.error)).toContain('spawn fallback');
   });
 
-  it('covers remaining branch paths', () => {
-    let code = cli.runWorkflow(['lido-stake', '--plan', '--amount', '10'], require);
+  it('covers remaining branch paths', async () => {
+    let code = await cli.runWorkflow(['lido-stake', '--plan', '--amount', '10'], require);
     expect(code).toBe(1);
-    code = cli.runWorkflow(['lido-wrap', '--plan', '--amount', '10'], require);
+    code = await cli.runWorkflow(['lido-wrap', '--plan', '--amount', '10'], require);
     expect(code).toBe(1);
-    code = cli.runWorkflow(['agent-register', '--plan', '--chain-id', '1'], require);
+    code = await cli.runWorkflow(['agent-register', '--plan', '--chain-id', '1'], require);
     expect(code).toBe(1);
 
     // non-missing plan branches without wallet
-    code = cli.runWorkflow(['lido-stake', '--plan', '--amount', '10', '--chain-id', '1'], require);
+    code = await cli.runWorkflow(['lido-stake', '--plan', '--amount', '10', '--chain-id', '1'], require);
     expect(code).toBe(0);
-    code = cli.runWorkflow(['lido-wrap', '--plan', '--amount', '10', '--chain-id', '1'], require);
+    code = await cli.runWorkflow(['lido-wrap', '--plan', '--amount', '10', '--chain-id', '1'], require);
     expect(code).toBe(0);
-    code = cli.runWorkflow(['agent-register', '--plan', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
+    code = await cli.runWorkflow(['agent-register', '--plan', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
     expect(code).toBe(0);
 
     // uniswap success with non-object/empty quote output -> tx/permitData null branches
@@ -271,36 +296,147 @@ describe('workflow runner', () => {
     spawnSyncMock
       .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"approved":true}'), stderr: Buffer.from('') })
       .mockReturnValueOnce({ status: 0, stdout: Buffer.from('ok-text'), stderr: Buffer.from('') });
-    code = cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'], require);
+    code = await cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(code).toBe(0);
     spawnSyncMock
       .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"approved":true}'), stderr: Buffer.from('') })
       .mockReturnValueOnce({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') });
-    code = cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'], require);
+    code = await cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(code).toBe(0);
 
     // lido-wrap wallet branch in run args
     spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x5"}'), stderr: Buffer.from('') });
-    code = cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+    code = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
     expect(code).toBe(0);
 
     // non-zero with undefined stderr branch
     stdoutWrite.mockClear();
     spawnSyncMock.mockReturnValueOnce({ status: 1, stdout: Buffer.from('{"x":1}') });
-    code = cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
+    code = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
     expect(code).toBe(1);
 
     // spawn error message branch with undefined stdout
     stdoutWrite.mockClear();
     spawnSyncMock.mockReturnValueOnce({ status: 0, stderr: Buffer.from(''), error: new Error('boom') });
-    code = cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
+    code = await cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
     expect(code).toBe(1);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     expect(JSON.parse(output).artifacts.error).toContain('boom');
   });
 
-  it('run() routes to workflow command', () => {
-    const code = cli.run(['run', 'doctor-summary', '--plan']);
+  it('omits ows artifact when serialization throws and serializeForOws handles unknown chains', async () => {
+    serializeTransactionMock.mockImplementationOnce(() => {
+      throw new Error('serialize failed');
+    });
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x2","data":"0x","value":"0","chainId":1}'), stderr: Buffer.from('') });
+    const code = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+    expect(code).toBe(0);
+    const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
+    expect(JSON.parse(output).artifacts.ows).toBeUndefined();
+
+    const unknown = await cli.serializeForOws({ to: '0x1', data: '0x', value: '0', chainId: 999999 });
+    expect(unknown).toBeNull();
+  });
+
+  it('covers serializeForOws parsing branches and wrap/agent ows branches', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x2","data":123,"value":"0","chainId":1}'), stderr: Buffer.from('') });
+    let code = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+    expect(code).toBe(0);
+
+    let ows = await cli.serializeForOws({ to: '0x1', chainId: '1' });
+    expect(ows?.unsignedTxHex).toBe('0xserialized');
+
+    ows = await cli.serializeForOws({ to: '0x1', data: '0x', value: 2.7, chainId: '0x1', from: '0xabc' });
+    expect(ows?.rpcUrl).toBe('https://eth.llamarpc.com');
+
+    ows = await cli.serializeForOws({ to: '0x1', data: '0x', value: 1n, chainId: Number.NaN });
+    expect(ows).toBeNull();
+
+    stdoutWrite.mockClear();
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x5","data":"0x","value":"0","chainId":1}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1', '--wallet', '0xabc'], require);
+    expect(code).toBe(0);
+    let output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
+    expect(JSON.parse(output).artifacts.ows.unsignedTxHex).toBe('0xserialized');
+
+    stdoutWrite.mockClear();
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x6","data":"0x","value":"0","chainId":1}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1', '--wallet', '0xabc'], require);
+    expect(code).toBe(0);
+    output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
+    expect(JSON.parse(output).artifacts.ows.unsignedTxHex).toBe('0xserialized');
+  });
+
+  it('covers parse and wallet branches for ows serialization', async () => {
+    let ows = await cli.serializeForOws({ to: '0x1', data: '0x', value: 1n, chainId: '1' });
+    expect(ows?.unsignedTxHex).toBe('0xserialized');
+    ows = await cli.serializeForOws({ to: '0x1', data: '0x', value: ' ', chainId: 'not-a-number' as any });
+    expect(ows).toBeNull();
+
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x2","data":"0x","value":"0","chainId":1}'), stderr: Buffer.from('') });
+    let code = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+
+    stdoutWrite.mockClear();
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x3","data":"0x","value":"0","chainId":1}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+
+    stdoutWrite.mockClear();
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x4","data":"0x","value":"0","chainId":1}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+
+    stdoutWrite.mockClear();
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"approved":true}'), stderr: Buffer.from('') })
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"tx":"not-object"}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'], require);
+    expect(code).toBe(0);
+  });
+
+  it('covers tx-candidate null branches across workflows', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x2","data":123}'), stderr: Buffer.from('') });
+    let code = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+    let output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
+    expect(JSON.parse(output).artifacts.ows).toBeUndefined();
+
+    stdoutWrite.mockClear();
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x3"}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['lido-wrap', '--amount', '10', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+
+    stdoutWrite.mockClear();
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"to":"0x4"}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['agent-register', '--uri', 'ipfs://abc', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+
+    stdoutWrite.mockClear();
+    spawnSyncMock
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"approved":true}'), stderr: Buffer.from('') })
+      .mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"tx":{"to":"0x1"}}'), stderr: Buffer.from('') });
+    code = await cli.runWorkflow(['uniswap-swap', '--token-in', 'WETH', '--token-out', 'USDC', '--amount', '1', '--chain-id', '1', '--wallet', '0xabc'], require);
+    expect(code).toBe(0);
+    output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
+    expect(JSON.parse(output).artifacts.ows).toBeUndefined();
+  });
+
+  it('covers remaining rpc mapping and parse branches', async () => {
+    expect((await cli.serializeForOws({ to: '0x1', chainId: 137 }))?.rpcUrl).toBe('https://polygon-rpc.com');
+    expect((await cli.serializeForOws({ to: '0x1', chainId: 8453 }))?.rpcUrl).toBe('https://mainnet.base.org');
+    expect((await cli.serializeForOws({ to: '0x1', chainId: 42161 }))?.rpcUrl).toBe('https://arb1.arbitrum.io/rpc');
+    expect((await cli.serializeForOws({ to: '0x1', chainId: 10 }))?.rpcUrl).toBe('https://mainnet.optimism.io');
+    expect(await cli.serializeForOws({ to: '0x1', chainId: {} as any })).toBeNull();
+    expect(await cli.serializeForOws({ to: '0x1', chainId: '0xzz' as any })).toBeNull();
+
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: Buffer.from('{"tx":"x","to":"0x9","chainId":1}'), stderr: Buffer.from('') });
+    const code = await cli.runWorkflow(['lido-stake', '--amount', '10', '--chain-id', '1'], require);
+    expect(code).toBe(0);
+  });
+
+  it('run() routes to workflow command', async () => {
+    const code = await cli.run(['run', 'doctor-summary', '--plan']);
     expect(code).toBe(0);
     const output = stdoutWrite.mock.calls.map((c: any) => c[0]).join('');
     expect(JSON.parse(output).workflow).toBe('doctor-summary');

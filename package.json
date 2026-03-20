@@ -47,7 +47,8 @@
     "8004-cli": "^1.0.2",
     "filecoin-cli": "^1.0.0",
     "lido-cli": "^1.2.0",
-    "uniswap-cli": "^1.2.0"
+    "uniswap-cli": "^1.2.0",
+    "viem": "^2.47.5"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
