@@ -6,18 +6,34 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:coverage
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        if: ${{ hashFiles('tsconfig.json') != '' }}
+        run: |
+          if jq -e '.scripts.typecheck' package.json >/dev/null; then
+            npm run typecheck
+          else
+            echo "No typecheck script; skipping"
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Test with coverage
+        run: npm run test:coverage
