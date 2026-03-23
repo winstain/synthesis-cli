@@ -1,111 +1,62 @@
 # Narrative
 
-## Short version
+## Core positioning
 
-Synthesis started from a simple need: make a practical CLI for using on-chain systems from agent harnesses like OpenClaw and Claude Code.
+Synthesis is **the superapp for agents**.
 
-The first impulse was narrow: use the Uniswap API from the terminal.
+Not a competitor to Anthropic/OpenAI. Closer to the missing execution layer those companies would acquire.
 
-That immediately exposed the real problem:
-- quoting is not enough
-- agents need wallets
-- wallets mean signing
-- signing means multi-step coordination
-- multi-step coordination means the agent needs both **tools** and **instructions for combining them**
+> **LLMs think. Synthesis acts.**  
+> **The execution layer is inevitable.**
 
-That is how this turned into a stack instead of a single CLI.
+## Core thesis
 
-## The real thesis
+Foundation models are the brains.
+Synthesis is the hands.
 
-Standalone protocol CLIs are not the end product.
+Anthropic’s `SKILL.md` pattern showed how agents can learn tool composition. That unlocked a lot, but it remains probabilistic: markdown instructions, interpretation, and hand-wavy glue.
 
-A `uniswap-cli`, `lido-cli`, or `8004-cli` is useful mostly because it gives an agent one concrete capability. But real work happens when an agent can move across tools:
+Synthesis pushes that into deterministic execution:
 
-- inspect protocol state
-- build transactions
-- sign typed data
-- sign transactions
-- broadcast transactions
-- record identity and reputation on-chain
+- **Tools**: raw capabilities
+- **Skills**: probabilistic composition guidance
+- **Workflows**: deterministic, reusable execution primitives
 
-The standalone CLIs are the primitives.
-The **skills** are the orchestration layer.
-The umbrella `synth` install is the distribution layer.
+Key framing: **Probabilistic → Deterministic**.
 
-## Why MoonPay mattered
+## Evolution story
 
-Once the original Uniswap CLI existed, the missing piece became obvious: the agent still needed wallets and signing.
+1. Started with a Uniswap CLI for agent harnesses.
+2. Agents needed wallets and signing → OWS/MoonPay path.
+3. Multi-step coordination was missing → workflows + plan mode.
+4. More protocols adopted the same pattern.
+5. The product emerged: **tools + skills + workflows + one install**.
 
-MoonPay CLI became the signer layer:
-- sign EIP-712 payloads
-- sign transactions
-- send transactions
-- manage wallets
+## Architecture story in plain language
 
-That turned the stack from "read-only API access" into "agents can actually do things on-chain."
+Synthesis is a composition system, not a monolith.
 
-## Why skills matter
+- Child protocol CLIs produce structured outputs and unsigned tx/message artifacts.
+- Execution CLIs handle signing and broadcast.
+- `synth` routes and orchestrates.
 
-A tool alone is not enough for an agent.
+Current state: workflows execute the full create → sign → broadcast path.
+Default happy path: OWS signs and MoonPay broadcasts.
 
-Agents need to know:
-- when to call which tool
-- in what order
-- what output from one step feeds the next
-- which steps are optional vs required
-- where human approval or wallet control enters the loop
+## Platform story
 
-That is why the skills exist.
+The platform grows through composition.
 
-The product is not just a pile of CLIs.
-It is:
+Today’s contribution path:
+1. build a child CLI
+2. add/update a skill
+3. add a workflow for a common deterministic flow
+4. open a PR
 
-1. standalone protocol tools
-2. a thin router that ships them together
-3. skills that teach agents how to compose them
+Future direction (not shipped): installable workflows, registry, and an app-store-like model for agent actions.
 
-## Human ↔ agent communication
+## Honesty rules for docs/demos
 
-The story is not "the human clicks a UI and the agent watches."
-
-The story is:
-- the human gives intent, constraints, and judgment
-- the agent uses terminal-native tools to execute and coordinate
-- the skills encode the learned workflows between them
-
-This matters for Synthesis because the project is really about **human-agent collaboration through tools**, not just protocol integrations.
-
-## Long-term vision
-
-Synthesis aims to become the **synthesis of on-chain tools** for agents:
-- one install
-- many protocol powers
-- composable skills
-- terminal-native workflows
-- no dependency on a traditional app UI
-
-If a human superapp is something like WeChat, the agent version should look very different.
-
-Agents do not need a chat-heavy superapp with buttons and tabs.
-They need:
-- a CLI
-- structured outputs
-- skills
-- signing infrastructure
-- a reliable way to chain actions together
-
-That is what Synthesis is trying to become.
-
-## Submission framing
-
-The best framing is:
-
-> I started by trying to build a simple Uniswap CLI for agent harnesses like OpenClaw and Claude Code.
-> That uncovered the real need: agents need not just protocol access, but wallets, signing, transaction building, and reusable workflow knowledge.
-> So the project evolved into Synthesis: a terminal-native stack of protocol CLIs, a thin umbrella router, and skills that teach agents how to combine the tools into real on-chain action.
-
-## Important honesty
-
-Do not oversell the standalone CLIs as the final product.
-
-They matter, but mainly because they are the primitives that make the larger agent workflow system possible.
+- Don’t claim protocol logic lives in `synth`.
+- Don’t describe future registry/app-store ideas as shipped.
+- Do clearly separate what exists now vs what is being built next.

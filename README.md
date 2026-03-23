@@ -4,34 +4,33 @@
 [![CI](https://github.com/winstain/synthesis-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/winstain/synthesis-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-A thin umbrella CLI that composes standalone protocol CLIs and wallet/signing CLIs into full on-chain workflows for agents.
+**Synthesis is the superapp for agents.**
 
-Standalone protocol CLIs are useful, but they are not the end state. The real goal is to give agents practical powers in the terminal: inspect state, build transactions, sign messages, sign transactions, broadcast transactions, and coordinate multi-step on-chain actions through one install and one set of skills.
+Not another model company. Not “like OpenAI/Anthropic.”
+Synthesis is the missing execution layer those model companies would acquire.
 
-## The idea
+> **LLMs think. Synthesis acts.**  
+> **The execution layer is inevitable.**
 
-Each protocol gets its own CLI. Each CLI can stand on its own, but the point is not to collect isolated command-line toys. `synth` routes to them and the bundled skills teach agents how to compose them into real workflows.
+## Core thesis
 
-That is the product thesis:
-- **tools** give agents powers
-- **skills** teach agents how to combine those powers
-- **synth** puts the whole stack behind one install
+Foundation models build the brains. Synthesis builds the hands.
 
-The longer-term vision is a kind of **superapp for agents**, but not in the human-UI sense. Agents do not need a WeChat-style interface. They need reliable tools, structured outputs, and a terminal-native workflow substrate.
+Anthropic made `SKILL.md` mainstream: a way for agents to learn tool usage. That was a major step, but skills are still probabilistic: markdown interpretation, judgment calls, and hand-wavy composition.
 
-The CLIs compose through shared structured contracts: **unsigned transaction JSON** for EVM flows, and protocol-native structured envelopes where needed.
+Synthesis pushes that composition toward deterministic execution:
 
-```
-synth uniswap quote → permitData → synth moonpay message sign → signature
-                                                                     ↓
-                    synth uniswap swap ← ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
-                         ↓
-                    { to, data, value, chainId }
-                         ↓
-                    synth moonpay tx sign → synth moonpay tx send → ✓ confirmed
-```
+- **Tools** = raw powers
+- **Skills** = learned composition patterns
+- **Workflows** = hardened, reusable, executable compositions
 
-**This is real.** A 0.1 USDC.e → USDT swap was executed on Polygon entirely through CLI composition — no UI, no SDK glue, just pipes and JSON.
+**Probabilistic → Deterministic** is the product direction.
+
+## What this package is
+
+`synth` is the umbrella CLI that routes to protocol and wallet/signing CLIs, ships bundled skills, and provides a workflow runner for repeatable multi-step flows.
+
+It is intentionally thin: child CLIs own protocol logic.
 
 ## Install
 
@@ -50,7 +49,7 @@ synth run <workflow> [--plan] [--key value ...]
 synth uniswap swap --help
 synth lido stake 1
 synth 8004 status
-synth moonpay transaction sign --help
+synth moonpay transaction send --help
 ```
 
 ### Utility commands
@@ -58,142 +57,102 @@ synth moonpay transaction sign --help
 ```bash
 synth list         # List registered child CLIs
 synth versions     # Show all versions
-synth doctor       # Health check — verify all child CLIs resolve
+synth doctor       # Health check — verify child CLIs resolve
 synth skills       # List bundled agent skills
 synth skills path  # Print the skills directory
 synth run list     # List built-in workflows
 ```
 
+## Architecture in one minute
+
+### Tools → Skills → Workflows
+
+- **Tools**: standalone protocol and wallet CLIs (`uniswap`, `lido`, `8004`, `filecoin`, `moonpay`, `ows`)
+- **Skills**: markdown playbooks that teach agents how to compose tools
+- **Workflows**: deterministic `synth run <workflow>` execution with typed JSON state
+
+### Transaction contract and execution split
+
+Protocol CLIs are signer-agnostic. They emit structured output, typically unsigned tx contracts (EVM) or protocol-native unsigned envelopes (e.g., Filecoin).
+
+Execution split:
+- child CLIs build tx/message artifacts
+- workflows orchestrate full **create tx → sign → broadcast**
+- OWS signs, MoonPay broadcasts
+
 ## Workflow runner
 
-`synth run` is the orchestration substrate. Workflows call child CLIs, capture structured JSON output, and return a typed workflow state envelope that agents can consume programmatically.
+`synth run` executes reusable multi-step compositions by calling child CLIs and returning typed JSON state that agents can consume directly.
 
-Every workflow supports `--plan` mode (show what will happen, no side effects) and `run` mode (actually execute child CLI commands).
+All workflows support:
+- `--plan` mode (no side effects, show exact command plan)
+- `run` mode (execute child commands)
 
 ### Built-in workflows
 
 | Workflow | What it does |
 |----------|-------------|
-| `doctor-summary` | Structured health snapshot of all child CLIs |
-| `uniswap-swap` | Check approval → quote → return unsigned tx + permit data |
-| `lido-stake` | Build unsigned Lido staking transaction |
-| `lido-wrap` | Build unsigned stETH → wstETH wrap transaction |
-| `agent-register` | Build unsigned ERC-8004 agent registration transaction |
+| `doctor-summary` | Structured health snapshot of child CLIs |
+| `uniswap-swap` | Check approval → quote → unsigned tx + permit data |
+| `lido-stake` | Build unsigned Lido staking tx |
+| `lido-wrap` | Build unsigned stETH → wstETH wrap tx |
+| `agent-register` | Build unsigned ERC-8004 registration tx |
 
-### Examples
+### Example
 
 ```bash
-# List available workflows
-synth run list
-
-# Plan mode — see what commands will run without executing anything
+# Plan mode: deterministic preview, no side effects
 synth run uniswap-swap --plan \
   --token-in 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
   --token-out 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
   --amount 1000000 --chain-id 1 --wallet 0xYOUR_ADDRESS
 
-# Run mode — actually call child CLIs and return structured output
+# Run mode: execute child CLI steps and return structured state
 synth run uniswap-swap \
   --token-in 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
   --token-out 0xdAC17F958D2ee523a2206206994597C13D831ec7 \
   --amount 1000000 --chain-id 1 --wallet 0xYOUR_ADDRESS
-
-# Lido staking
-synth run lido-stake --amount 1.0 --chain-id 1 --wallet 0xYOUR_ADDRESS
-
-# Agent registration (ERC-8004)
-synth run agent-register --uri https://example.com/agent.json --chain-id 1 --wallet 0xYOUR_ADDRESS
 ```
 
-### Workflow state envelope
+## Evolution story
 
-All workflows return a JSON state object:
+1. Started as a Uniswap CLI for agent harnesses
+2. Agents needed wallets/signing → OWS sign + MoonPay broadcast path
+3. Multi-step coordination was missing → workflow runner + plan mode
+4. More protocols, same composition pattern → architecture scaled
+5. The product emerged: **tools + skills + workflows + one install**
 
-```json
-{
-  "workflow": "uniswap-swap",
-  "status": "needs_signature",
-  "mode": "run",
-  "steps": ["Validate inputs", "Run check-approval", "Run quote", "Return unsigned tx"],
-  "artifacts": { "approval": {}, "quote": {}, "tx": {}, "permitData": {} },
-  "nextAction": "Sign and send the transaction using your signer backend."
-}
-```
+## Contribution model (today)
 
-Statuses: `planned`, `needs_approval`, `needs_signature`, `ready_to_send`, `completed`, `failed`.
+The platform grows through composition:
 
-## How it works
+1. build a child CLI
+2. add/update its skill
+3. add a workflow for common deterministic paths
+4. open a PR
 
-`synth` is a **router, not a runtime**. It:
-
-1. Looks up the command in a `ROUTES` map
-2. Resolves the child CLI's binary from its installed `node_modules`
-3. Forwards all arguments directly via `spawnSync`
-
-No protocol logic lives in this package. Child CLIs are the primitives.
-
-### The unsigned tx contract
-
-Protocol CLIs (like `uniswap`, `lido`) produce unsigned transactions:
-
-```json
-{
-  "to": "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
-  "data": "0x3593564c000000...",
-  "value": "0",
-  "chainId": 137
-}
-```
-
-Signer CLIs (like `moonpay`) consume them. This is the universal handoff that makes composition work.
-
-### Example: token swap in 6 commands
-
-```bash
-# 1. Check if approval is needed
-synth uniswap check-approval --token $TOKEN_IN --amount $AMOUNT --chain 137 --wallet 0xADDR
-
-# 2. Approve (if needed) — sign + send the approval tx
-synth moonpay transaction sign --wallet-id <wid> --to $APPROVAL_TO --data $APPROVAL_DATA --value 0 --chain-id 137
-synth moonpay transaction send --wallet-id <wid> --signed-tx $SIGNED
-
-# 3. Get quote + Permit2 data
-synth uniswap swap --from $TOKEN_IN --to $TOKEN_OUT --amount $AMOUNT --chain 137 --wallet 0xADDR
-
-# 4. Sign the Permit2 EIP-712 message
-synth moonpay message sign --wallet-id <wid> --typedData "$PERMIT_DATA"
-
-# 5. Build the swap tx (with permit signature)
-synth uniswap swap --from $TOKEN_IN --to $TOKEN_OUT --amount $AMOUNT --chain 137 --wallet 0xADDR --permit-signature $SIG
-
-# 6. Sign + send the swap tx
-synth moonpay transaction sign --wallet-id <wid> --to $SWAP_TO --data $SWAP_DATA --value 0 --chain-id 137
-synth moonpay transaction send --wallet-id <wid> --signed-tx $SIGNED
-```
-
-See [docs/guides/first-swap.md](./docs/guides/first-swap.md) for the full walkthrough with example output.
+Future direction (not shipped yet): installable workflows, registry, app-store-for-agent-actions.
 
 ## Child CLIs
 
-| CLI | Package | What it does |
-|-----|---------|-------------|
-| `uniswap` | `uniswap-cli` | Token swaps, quotes, approval checks, Permit2 signing |
-| `lido` | `lido-cli` | Liquid staking: stake ETH, wrap/unwrap stETH, withdrawals |
-| `8004` | `8004-cli` | ERC-8004 agent identity: register, lookup, rate, reputation |
-| `filecoin` | `filecoin-cli` | Filecoin storage deals and network operations |
-| `moonpay` | `@moonpay/cli` | Wallet operations, transaction signing, message signing |
-| `ows` | `@open-wallet-standard/core` | Chain-agnostic wallet, signing, and transaction send |
+| CLI | Package | Role |
+|-----|---------|------|
+| `uniswap` | `uniswap-cli` | Swaps, quotes, approval checks, Permit2 data |
+| `lido` | `lido-cli` | Liquid staking tx builders |
+| `8004` | `8004-cli` | ERC-8004 identity/reputation tx builders |
+| `filecoin` | `filecoin-cli` | Filecoin unsigned message flows |
+| `moonpay` | `@moonpay/cli` | Broadcast backend |
+| `ows` | `@open-wallet-standard/core` | Wallet/signing backend (default signer) |
 
 ## Docs
 
-- **[Architecture](./docs/architecture.md)** — Philosophy, routing, output contracts, Permit2 composition, and MCP expectations
-- **[Narrative](./docs/narrative.md)** — Why this started as a simple Uniswap CLI and became a terminal-native tool/skill stack for agents
-- **[Prize Strategy](./docs/prize-strategy.md)** — Which tracks matter, what they require, and how roadmap work maps to deliverables
-- **[Collaboration Notes](./docs/collaboration.md)** — Anonymized human ↔ agent collaboration source material for submission and demo copy
-- **[First Swap Guide](./docs/guides/first-swap.md)** — Step-by-step Uniswap swap walkthrough
-- **[Adding a CLI](./docs/guides/adding-a-cli.md)** — How to add a new child CLI to the stack
-- **[Submission Readiness](./docs/submission-readiness.md)** — Demo checklist and how to present the stack cleanly
-- **[Roadmap](./docs/roadmap.md)** — Current state and what's next
+- **[Architecture](./docs/architecture.md)** — Tools→Skills→Workflows, contracts, execution split, flow direction
+- **[Narrative](./docs/narrative.md)** — Product story and positioning
+- **[Submission Readiness](./docs/submission-readiness.md)** — Demo checklist and honest messaging
+- **[Roadmap](./docs/roadmap.md)** — Current state vs intended direction
+- **[Prize Strategy](./docs/prize-strategy.md)** — Track mapping and deliverable priorities
+- **[Contributing](./docs/contributing.md)** — How to add CLIs, skills, workflows
+- **[First Swap Guide](./docs/guides/first-swap.md)** — End-to-end Uniswap example
 
 ## Development
 

@@ -225,6 +225,8 @@ export type WorkflowStatus =
   | 'needs_approval'
   | 'needs_signature'
   | 'ready_to_send'
+  | 'broadcast'
+  | 'confirmed'
   | 'completed'
   | 'failed';
 
@@ -250,6 +252,18 @@ type OwsSerialization = {
   signCommand: string;
   sendCommand: string;
   rpcUrl: string;
+};
+
+type MoonpayChainName = 'ethereum' | 'polygon' | 'base' | 'arbitrum';
+
+type MoonpayExecution = {
+  chain: MoonpayChainName;
+  unsignedTxHex: string;
+  signCommand: string[];
+  signOutput: unknown;
+  signedTxHex: string;
+  sendCommand: string[];
+  sendOutput: unknown;
 };
 
 type WorkflowContext = {
@@ -316,6 +330,9 @@ function runChildJson(command: RouteName, args: string[]): ChildRunResult {
 
   const fullCommand = [binPath, ...args];
   const result = spawnSync(process.execPath, fullCommand, { stdio: ['pipe', 'pipe', 'pipe'] });
+  if (!result) {
+    return { ok: false, command: [command, ...args], error: 'Child command returned no result.', output: null };
+  }
   const output = parseJsonOutput(result.stdout);
 
   if (result.error) {
@@ -356,6 +373,82 @@ function parseBigIntValue(value: string | number | bigint | undefined): bigint {
   if (typeof value === 'number') return BigInt(Math.max(0, Math.trunc(value)));
   if (typeof value === 'string' && value.trim() !== '') return BigInt(value);
   return 0n;
+}
+
+function chainIdToMoonpayChain(chainId: number): MoonpayChainName | null {
+  if (chainId === 1) return 'ethereum';
+  if (chainId === 137) return 'polygon';
+  if (chainId === 8453) return 'base';
+  if (chainId === 42161) return 'arbitrum';
+  return null;
+}
+
+function extractSignedTxHex(output: unknown): string | null {
+  if (typeof output === 'string') {
+    const trimmed = output.trim();
+    return trimmed.startsWith('0x') ? trimmed : null;
+  }
+  if (!output || typeof output !== 'object') return null;
+  const candidate = output as Record<string, unknown>;
+  const fields = ['signedTxHex', 'signedTx', 'signedTransaction', 'transaction', 'tx'];
+  for (const field of fields) {
+    const value = candidate[field];
+    if (typeof value === 'string' && value.startsWith('0x')) return value;
+  }
+  return null;
+}
+
+async function signWithOwsAndSendWithMoonpay(tx: GenericUnsignedTx, wallet: string): Promise<{ ok: true; moonpay: MoonpayExecution } | { ok: false; error: string; failedCommand: string[]; output: unknown }> {
+  const chainId = parseChainId(tx.chainId);
+  if (chainId === null) {
+    return { ok: false, error: 'Invalid chainId in tx payload.', failedCommand: ['ows', 'sign', 'tx'], output: tx.chainId };
+  }
+  const chain = chainIdToMoonpayChain(chainId);
+  if (!chain) {
+    return { ok: false, error: `Unsupported chainId for moonpay: ${chainId}`, failedCommand: ['moonpay', 'transaction', 'send'], output: tx.chainId };
+  }
+
+  const ows = await serializeForOws(tx);
+  if (!ows) {
+    return { ok: false, error: 'Failed to serialize tx for OWS signing.', failedCommand: ['ows', 'sign', 'tx'], output: tx };
+  }
+
+  const owsChain = `eip155:${chainId}`;
+  const unsignedTxHex = ows.unsignedTxHex;
+  const signCommand = ['sign', 'tx', '--wallet', wallet, '--chain', owsChain, '--tx', unsignedTxHex, '--json'];
+  const signed = runChildJson('ows', signCommand);
+  if (!signed.ok) {
+    return { ok: false, error: signed.error, failedCommand: signed.command, output: signed.output };
+  }
+
+  const signedTxHex = extractSignedTxHex(signed.output);
+  if (!signedTxHex) {
+    return {
+      ok: false,
+      error: 'ows sign tx did not return a signed tx hex string.',
+      failedCommand: signed.command,
+      output: signed.output,
+    };
+  }
+
+  const sendCommand = ['transaction', 'send', '--chain', chain, '--transaction', signedTxHex];
+  const sent = runChildJson('moonpay', sendCommand);
+  if (!sent.ok) {
+    return { ok: false, error: sent.error, failedCommand: sent.command, output: sent.output };
+  }
+
+  return {
+    ok: true,
+    moonpay: {
+      chain,
+      unsignedTxHex,
+      signCommand: ['ows', ...signCommand],
+      signOutput: signed.output,
+      signedTxHex,
+      sendCommand: ['moonpay', ...sendCommand],
+      sendOutput: sent.output,
+    },
+  };
 }
 
 function extractTxObject(output: unknown): GenericUnsignedTx | null {
@@ -408,8 +501,8 @@ export async function serializeForOws(tx: GenericUnsignedTx): Promise<OwsSeriali
 
     return {
       unsignedTxHex,
-      signCommand: `ows sign tx --wallet <wallet-name> --chain evm --tx-hex ${unsignedTxHex}`,
-      sendCommand: `ows sign send-tx --wallet <wallet-name> --chain evm --tx-hex ${unsignedTxHex} --rpc-url ${rpcUrl}`,
+      signCommand: `ows sign tx --wallet <wallet-name> --chain eip155:${chainId} --tx ${unsignedTxHex} --json`,
+      sendCommand: `ows sign send-tx --wallet <wallet-name> --chain eip155:${chainId} --tx ${unsignedTxHex} --json --rpc-url ${rpcUrl}`,
       rpcUrl,
     };
   } catch {
@@ -455,7 +548,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
   },
   'uniswap-swap': {
     name: 'uniswap-swap',
-    description: 'Check approval + quote a Uniswap swap and return unsigned tx payloads.',
+    description: 'Check approval, build, sign with OWS, and broadcast a Uniswap swap.',
     plan: ({ input }) => {
       const requiredKeys = ['token-in', 'token-out', 'amount', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
@@ -463,7 +556,9 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
         'Validate required swap inputs',
         'Run `uniswap check-approval` for token allowance status',
         'Run `uniswap quote` to get route, permit data, and unsigned tx',
-        'Pause for signer to sign and send transaction',
+        'Serialize unsigned tx for OWS signing',
+        'Run `ows sign tx`',
+        'Run `moonpay transaction send`',
       ];
 
       return {
@@ -482,7 +577,7 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
         },
         nextAction: missing.length > 0
           ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}`
-          : 'Run `synth run uniswap-swap` to execute checks and build signer-ready output.',
+          : 'Run `synth run uniswap-swap` to execute the full create → sign → send flow.',
       };
     },
     run: async ({ input }) => {
@@ -492,7 +587,9 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
         'Validate required swap inputs',
         'Run `uniswap check-approval`',
         'Run `uniswap quote`',
-        'Return unsigned transaction bundle for signer',
+        'Serialize unsigned tx for OWS signing',
+        'Run `ows sign tx`',
+        'Run `moonpay transaction send`',
       ];
 
       if (missing.length > 0) {
@@ -532,13 +629,53 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
 
       const quoteObj = (quote.output ?? {}) as Record<string, unknown>;
       const txCandidate = extractTxObject(quoteObj.tx);
-      const ows = txCandidate
-        ? await serializeForOws({ ...txCandidate, from: input.wallet as string })
-        : null;
+      const ows = txCandidate ? await serializeForOws(txCandidate) : null;
+
+      if (!txCandidate) {
+        return {
+          workflow: 'uniswap-swap',
+          status: 'failed',
+          mode: 'run',
+          steps,
+          artifacts: {
+            input,
+            approval: approval.output,
+            quote: quote.output,
+            tx: quoteObj.tx ?? null,
+            permitData: quoteObj.permitData ?? null,
+            ...(ows ? { ows } : {}),
+            commands: [approval.command, quote.command],
+          },
+          nextAction: 'Quote output did not include a valid tx envelope.',
+        };
+      }
+
+      const moonpay = await signWithOwsAndSendWithMoonpay(txCandidate, input.wallet as string);
+      if (!moonpay.ok) {
+        return {
+          workflow: 'uniswap-swap',
+          status: 'failed',
+          mode: 'run',
+          steps,
+          artifacts: {
+            input,
+            approval: approval.output,
+            quote: quote.output,
+            tx: quoteObj.tx ?? null,
+            permitData: quoteObj.permitData ?? null,
+            ...(ows ? { ows } : {}),
+            failedCommand: moonpay.failedCommand,
+            error: moonpay.error,
+            output: moonpay.output,
+            commands: [approval.command, quote.command],
+          },
+          nextAction: 'Fix the error and retry.',
+        };
+      }
 
       return {
         workflow: 'uniswap-swap',
-        status: 'needs_signature',
+        status: 'broadcast',
         mode: 'run',
         steps,
         artifacts: {
@@ -548,145 +685,185 @@ export const WORKFLOWS: Record<string, WorkflowDefinition> = {
           tx: quoteObj.tx ?? null,
           permitData: quoteObj.permitData ?? null,
           ...(ows ? { ows } : {}),
-          commands: [approval.command, quote.command],
+          moonpay: moonpay.moonpay,
+          commands: [approval.command, quote.command, moonpay.moonpay.signCommand, moonpay.moonpay.sendCommand],
         },
-        nextAction: 'Sign and send the transaction using your signer backend.',
+        nextAction: null,
       };
     },
   },
   'lido-stake': {
     name: 'lido-stake',
-    description: 'Build an unsigned Lido stake transaction.',
+    description: 'Build, sign with OWS, and broadcast a Lido stake transaction.',
     plan: ({ input }) => {
-      const requiredKeys = ['amount', 'chain-id'];
+      const requiredKeys = ['amount', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       return {
         workflow: 'lido-stake',
         status: missing.length > 0 ? 'failed' : 'planned',
         mode: 'plan',
-        steps: ['Validate required inputs', 'Run `lido stake` to build tx payload', 'Pause for signing + send'],
+        steps: [
+          'Validate required inputs',
+          'Run `lido stake` to build tx payload',
+          'Serialize unsigned tx for OWS signing',
+          'Run `ows sign tx`',
+          'Run `moonpay transaction send`',
+        ],
         artifacts: {
           input,
           requirements: requiredKeys,
           missing,
-          command: (() => {
-            const c = ['lido', 'stake', String(input.amount), '--chain', String(input['chain-id'])];
-            if (readInputString(input, 'wallet')) c.push('--wallet', input.wallet as string);
-            return c;
-          })(),
+          command: ['lido', 'stake', String(input.amount), '--chain', String(input['chain-id']), '--wallet', String(input.wallet)],
         },
-        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
+        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to execute sign + broadcast.',
       };
     },
     run: async ({ input }) => {
-      const requiredKeys = ['amount', 'chain-id'];
+      const requiredKeys = ['amount', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
-      const steps = ['Validate required inputs', 'Run `lido stake` to build tx payload', 'Pause for signing + send'];
+      const steps = [
+        'Validate required inputs',
+        'Run `lido stake` to build tx payload',
+        'Serialize unsigned tx for OWS signing',
+        'Run `ows sign tx`',
+        'Run `moonpay transaction send`',
+      ];
       if (missing.length > 0) {
         return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, missing }, nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}` };
       }
+      const wallet = readInputString(input, 'wallet');
       const args = ['stake', input.amount as string, '--chain', input['chain-id'] as string];
-      if (readInputString(input, 'wallet')) args.push('--wallet', input.wallet as string);
+      if (wallet) args.push('--wallet', wallet);
       const result = runChildJson('lido', args);
       if (!result.ok) {
         return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
       }
       const txCandidate = extractTxObject(result.output);
-      const wallet = readInputString(input, 'wallet');
-      const ows = txCandidate
-        ? await serializeForOws(wallet ? { ...txCandidate, from: wallet } : txCandidate)
-        : null;
-      return { workflow: 'lido-stake', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+      const ows = txCandidate ? await serializeForOws(txCandidate) : null;
+      if (!txCandidate) {
+        return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Lido output did not include a valid tx envelope.' };
+      }
+      const moonpay = await signWithOwsAndSendWithMoonpay(txCandidate, wallet as string);
+      if (!moonpay.ok) {
+        return { workflow: 'lido-stake', status: 'failed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command, failedCommand: moonpay.failedCommand, error: moonpay.error, output: moonpay.output }, nextAction: 'Fix the error and retry.' };
+      }
+      return { workflow: 'lido-stake', status: 'confirmed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), moonpay: moonpay.moonpay, command: result.command, commands: [result.command, moonpay.moonpay.signCommand, moonpay.moonpay.sendCommand] }, nextAction: null };
     },
   },
   'lido-wrap': {
     name: 'lido-wrap',
-    description: 'Build an unsigned Lido wrap transaction.',
+    description: 'Build, sign with OWS, and broadcast a Lido wrap transaction.',
     plan: ({ input }) => {
-      const requiredKeys = ['amount', 'chain-id'];
+      const requiredKeys = ['amount', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       return {
         workflow: 'lido-wrap',
         status: missing.length > 0 ? 'failed' : 'planned',
         mode: 'plan',
-        steps: ['Validate required inputs', 'Run `lido wrap` to build tx payload', 'Pause for signing + send'],
+        steps: [
+          'Validate required inputs',
+          'Run `lido wrap` to build tx payload',
+          'Serialize unsigned tx for OWS signing',
+          'Run `ows sign tx`',
+          'Run `moonpay transaction send`',
+        ],
         artifacts: {
           input,
           requirements: requiredKeys,
           missing,
-          command: (() => {
-            const c = ['lido', 'wrap', String(input.amount), '--chain', String(input['chain-id'])];
-            if (readInputString(input, 'wallet')) c.push('--wallet', input.wallet as string);
-            return c;
-          })(),
+          command: ['lido', 'wrap', String(input.amount), '--chain', String(input['chain-id']), '--wallet', String(input.wallet)],
         },
-        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
+        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to execute sign + broadcast.',
       };
     },
     run: async ({ input }) => {
-      const requiredKeys = ['amount', 'chain-id'];
+      const requiredKeys = ['amount', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
-      const steps = ['Validate required inputs', 'Run `lido wrap` to build tx payload', 'Pause for signing + send'];
+      const steps = [
+        'Validate required inputs',
+        'Run `lido wrap` to build tx payload',
+        'Serialize unsigned tx for OWS signing',
+        'Run `ows sign tx`',
+        'Run `moonpay transaction send`',
+      ];
       if (missing.length > 0) {
         return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, missing }, nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}` };
       }
+      const wallet = readInputString(input, 'wallet');
       const args = ['wrap', input.amount as string, '--chain', input['chain-id'] as string];
-      if (readInputString(input, 'wallet')) args.push('--wallet', input.wallet as string);
+      if (wallet) args.push('--wallet', wallet);
       const result = runChildJson('lido', args);
       if (!result.ok) {
         return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
       }
       const txCandidate = extractTxObject(result.output);
-      const wallet = readInputString(input, 'wallet');
-      const ows = txCandidate
-        ? await serializeForOws(wallet ? { ...txCandidate, from: wallet } : txCandidate)
-        : null;
-      return { workflow: 'lido-wrap', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+      const ows = txCandidate ? await serializeForOws(txCandidate) : null;
+      if (!txCandidate) {
+        return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Lido output did not include a valid tx envelope.' };
+      }
+      const moonpay = await signWithOwsAndSendWithMoonpay(txCandidate, wallet as string);
+      if (!moonpay.ok) {
+        return { workflow: 'lido-wrap', status: 'failed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command, failedCommand: moonpay.failedCommand, error: moonpay.error, output: moonpay.output }, nextAction: 'Fix the error and retry.' };
+      }
+      return { workflow: 'lido-wrap', status: 'confirmed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), moonpay: moonpay.moonpay, command: result.command, commands: [result.command, moonpay.moonpay.signCommand, moonpay.moonpay.sendCommand] }, nextAction: null };
     },
   },
   'agent-register': {
     name: 'agent-register',
-    description: 'Build an unsigned 8004 agent registration transaction.',
+    description: 'Build, sign with OWS, and broadcast an 8004 agent registration transaction.',
     plan: ({ input }) => {
-      const requiredKeys = ['uri', 'chain-id'];
+      const requiredKeys = ['uri', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
       return {
         workflow: 'agent-register',
         status: missing.length > 0 ? 'failed' : 'planned',
         mode: 'plan',
-        steps: ['Validate required inputs', 'Run `8004 register` to build tx payload', 'Pause for signing + send'],
+        steps: [
+          'Validate required inputs',
+          'Run `8004 register` to build tx payload',
+          'Serialize unsigned tx for OWS signing',
+          'Run `ows sign tx`',
+          'Run `moonpay transaction send`',
+        ],
         artifacts: {
           input,
           requirements: requiredKeys,
           missing,
-          command: (() => {
-            const c = ['8004', 'register', '--uri', String(input.uri), '--chain', String(input['chain-id'])];
-            if (readInputString(input, 'wallet')) c.push('--wallet', input.wallet as string);
-            return c;
-          })(),
+          command: ['8004', 'register', '--uri', String(input.uri), '--chain', String(input['chain-id']), '--wallet', String(input.wallet)],
         },
-        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to generate signer-ready tx output.',
+        nextAction: missing.length > 0 ? `Provide missing required inputs: ${missing.map((k) => `--${k}`).join(', ')}` : 'Run without --plan to execute sign + broadcast.',
       };
     },
     run: async ({ input }) => {
-      const requiredKeys = ['uri', 'chain-id'];
+      const requiredKeys = ['uri', 'chain-id', 'wallet'];
       const missing = missingWorkflowKeys(input, requiredKeys);
-      const steps = ['Validate required inputs', 'Run `8004 register` to build tx payload', 'Pause for signing + send'];
+      const steps = [
+        'Validate required inputs',
+        'Run `8004 register` to build tx payload',
+        'Serialize unsigned tx for OWS signing',
+        'Run `ows sign tx`',
+        'Run `moonpay transaction send`',
+      ];
       if (missing.length > 0) {
         return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, missing }, nextAction: `Provide: ${missing.map((k) => `--${k}`).join(', ')}` };
       }
+      const wallet = readInputString(input, 'wallet');
       const args = ['register', '--uri', input.uri as string, '--chain', input['chain-id'] as string];
-      if (readInputString(input, 'wallet')) args.push('--wallet', input.wallet as string);
+      if (wallet) args.push('--wallet', wallet);
       const result = runChildJson('8004', args);
       if (!result.ok) {
         return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, failedCommand: result.command, error: result.error, output: result.output }, nextAction: 'Fix the error and retry.' };
       }
       const txCandidate = extractTxObject(result.output);
-      const wallet = readInputString(input, 'wallet');
-      const ows = txCandidate
-        ? await serializeForOws(wallet ? { ...txCandidate, from: wallet } : txCandidate)
-        : null;
-      return { workflow: 'agent-register', status: 'needs_signature', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: 'Sign and send the transaction using your signer backend.' };
+      const ows = txCandidate ? await serializeForOws(txCandidate) : null;
+      if (!txCandidate) {
+        return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command }, nextAction: '8004 output did not include a valid tx envelope.' };
+      }
+      const moonpay = await signWithOwsAndSendWithMoonpay(txCandidate, wallet as string);
+      if (!moonpay.ok) {
+        return { workflow: 'agent-register', status: 'failed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), command: result.command, failedCommand: moonpay.failedCommand, error: moonpay.error, output: moonpay.output }, nextAction: 'Fix the error and retry.' };
+      }
+      return { workflow: 'agent-register', status: 'confirmed', mode: 'run', steps, artifacts: { input, tx: result.output, ...(ows ? { ows } : {}), moonpay: moonpay.moonpay, command: result.command, commands: [result.command, moonpay.moonpay.signCommand, moonpay.moonpay.sendCommand] }, nextAction: null };
     },
   },
 };
