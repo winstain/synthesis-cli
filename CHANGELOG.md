@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.2](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.4.1...synthesis-cli-v0.4.2) (2026-03-23)
+
+
+### Bug Fixes
+
+* sync lockfile for filecoin-cli 1.2.0 ([54193c2](https://github.com/winstain/synthesis-cli/commit/54193c2a8b449429b1710d2f42a0118ac085abe9))
+* sync lockfile for latest filecoin-cli ([fdb575f](https://github.com/winstain/synthesis-cli/commit/fdb575f5a00f240fe8ca34bf2e30b2cf8707618a))
+
 ## [0.4.1](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.4.0...synthesis-cli-v0.4.1) (2026-03-23)
 
 
