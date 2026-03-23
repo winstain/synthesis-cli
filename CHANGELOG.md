@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.3.0...synthesis-cli-v0.4.0) (2026-03-23)
+
+
+### Features
+
+* add OWS tx serialization to workflow layer ([5c54e75](https://github.com/winstain/synthesis-cli/commit/5c54e7599ed469f6204525a3178a84b008fddff2))
+* add Slidev demo deck for hackathon submission ([83324b7](https://github.com/winstain/synthesis-cli/commit/83324b725ba145fd29b44f146b792889e4fb3e51))
+* full-flow workflows with OWS signing and docs alignment ([49e5b1d](https://github.com/winstain/synthesis-cli/commit/49e5b1d4e484796f06e590500e8034c762f8430b))
+* real workflow execution for uniswap-swap, lido-stake, lido-wrap, agent-register ([45656e3](https://github.com/winstain/synthesis-cli/commit/45656e3cb681260800e132816693fdaef7316468))
+
+
+### Bug Fixes
+
+* contributing doc — child CLIs are signer-agnostic, OWS conversion belongs in workflow layer ([0537b47](https://github.com/winstain/synthesis-cli/commit/0537b475e37079e2862564b1f7d1e183b6599920))
+
 ## [0.3.0](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.2.1...synthesis-cli-v0.3.0) (2026-03-20)
 
 
