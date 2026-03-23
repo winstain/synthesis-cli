@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.4.0...synthesis-cli-v0.4.1) (2026-03-23)
+
+
+### Bug Fixes
+
+* add repository metadata for trusted publishing ([aac1999](https://github.com/winstain/synthesis-cli/commit/aac19994a550a4e71859fdffa149beeded7b00ea))
+* add repository metadata for trusted publishing ([848b6f5](https://github.com/winstain/synthesis-cli/commit/848b6f515875e8ab00df9a660fc04caa471765cb))
+
 ## [0.4.0](https://github.com/winstain/synthesis-cli/compare/synthesis-cli-v0.3.0...synthesis-cli-v0.4.0) (2026-03-23)
 
 
