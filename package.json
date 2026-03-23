@@ -33,6 +33,10 @@
     "8004"
   ],
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/winstain/synthesis-cli.git"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -45,7 +49,7 @@
     "@moonpay/cli": "^1.6.4",
     "@open-wallet-standard/core": "^0.3.9",
     "8004-cli": "^1.0.2",
-    "filecoin-cli": "^1.0.0",
+    "filecoin-cli": "^1.2.0",
     "lido-cli": "^1.2.0",
     "uniswap-cli": "^1.2.0",
     "viem": "^2.47.5"
