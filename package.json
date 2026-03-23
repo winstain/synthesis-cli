@@ -1,6 +1,6 @@
 {
   "name": "synthesis-cli",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Thin umbrella CLI that installs and routes to protocol child CLIs",
   "private": false,
   "type": "module",
